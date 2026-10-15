@@ -2,25 +2,57 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --surface: #f7f7f8;
+  --surface-muted: #eeeef0;
+  --foreground: #1c1c1e;
+  --foreground-muted: #55565a;
+  --border: #dddfe2;
+  --primary: #c62828;
+  --primary-foreground: #ffffff;
+  --primary-hover: #a81f1f;
+  --ring: #c62828;
+  --critical: #b3261e;
+  --critical-bg: #fdecea;
+  --success: #1e6b3c;
+  --success-bg: #e9f5ee;
+  --warning: #8a5a00;
+  --warning-bg: #fff4e0;
+  --radius: 0.5rem;
 }
 
 @theme inline {
   --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
   --color-foreground: var(--foreground);
+  --color-foreground-muted: var(--foreground-muted);
+  --color-border: var(--border);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-hover: var(--primary-hover);
+  --color-ring: var(--ring);
+  --color-critical: var(--critical);
+  --color-critical-bg: var(--critical-bg);
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-warning: var(--warning);
+  --color-warning-bg: var(--warning-bg);
+  --radius-md: var(--radius);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+body {
+  background: var(--surface);
+  color: var(--foreground);
+  font-family: var(--font-sans), -apple-system, "Segoe UI", Arial, Helvetica, sans-serif;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+* {
+  border-color: var(--border);
+}
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
