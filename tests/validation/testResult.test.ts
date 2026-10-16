@@ -25,12 +25,28 @@ function baseInput(overrides: Partial<TestResultDraftInput> = {}): TestResultDra
 }
 
 describe("getConditionalRequirementErrors", () => {
-  it("requires actual result, a specific severity, evidence, and a defect for Fail", () => {
+  it("requires actual result, a specific severity, and a defect for Fail", () => {
     const errors = getConditionalRequirementErrors(baseInput({ status: "Fail" }));
     expect(errors.actualResult).toBeDefined();
     expect(errors.severity).toBeDefined();
-    expect(errors.evidence).toBeDefined();
     expect(errors.defectId).toBeDefined();
+  });
+
+  it("accepts Pass and Fail without evidence when other requirements are met", () => {
+    const passErrors = getConditionalRequirementErrors(
+      baseInput({ status: "Pass", grade: "A", actualResult: "Worked as expected" }),
+    );
+    const failErrors = getConditionalRequirementErrors(
+      baseInput({
+        status: "Fail",
+        actualResult: "It broke",
+        severity: "High",
+        defectId: "11111111-1111-1111-1111-111111111111",
+      }),
+    );
+
+    expect(passErrors).toEqual({});
+    expect(failErrors).toEqual({});
   });
 
   it("accepts a complete Fail submission", () => {
@@ -66,10 +82,9 @@ describe("getConditionalRequirementErrors", () => {
     expect(errors.blockedTargetDate).toBeDefined();
   });
 
-  it("requires actual result, evidence, and grade A or B for Pass", () => {
+  it("requires actual result and grade A or B for Pass", () => {
     const errors = getConditionalRequirementErrors(baseInput({ status: "Pass", grade: "C" }));
     expect(errors.actualResult).toBeDefined();
-    expect(errors.evidence).toBeDefined();
     expect(errors.grade).toBeDefined();
   });
 

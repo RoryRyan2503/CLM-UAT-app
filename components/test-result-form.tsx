@@ -36,6 +36,7 @@ export function TestResultForm({
   vendorId,
   result,
   evidence,
+  evidenceEnabled,
   onSaved,
 }: {
   vendorName: string;
@@ -43,6 +44,7 @@ export function TestResultForm({
   vendorId: string;
   result: TestResultRow;
   evidence: EvidenceRow[];
+  evidenceEnabled: boolean;
   onSaved?: () => void;
 }) {
   // Keyed by result.id at the call site (see test case page), so a new assignment/result
@@ -249,16 +251,18 @@ export function TestResultForm({
           </div>
         ) : null}
 
-        <Field label="Required evidence" error={errors.evidence}>
-          <EvidenceManager
-            testResultId={result.id}
-            evidence={evidenceList}
-            onAdded={(e) => {
-              setEvidenceList((prev) => [e, ...prev]);
-              setIsDirty(true);
-            }}
-          />
-        </Field>
+        {evidenceEnabled ? (
+          <Field label="Evidence (optional)" error={errors.evidence}>
+            <EvidenceManager
+              testResultId={result.id}
+              evidence={evidenceList}
+              onAdded={(e) => {
+                setEvidenceList((prev) => [e, ...prev]);
+                setIsDirty(true);
+              }}
+            />
+          </Field>
+        ) : null}
 
         <Field label="Defect" error={errors.defectId}>
           <DefectDialog

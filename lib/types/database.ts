@@ -362,6 +362,12 @@ export interface Database {
         Update: Partial<Database["public"]["Tables"]["import_batches"]["Insert"]>;
         Relationships: [];
       };
+      app_settings: {
+        Row: { id: number; evidence_enabled: boolean; updated_at: string };
+        Insert: { id?: number; evidence_enabled?: boolean; updated_at?: string };
+        Update: Partial<Database["public"]["Tables"]["app_settings"]["Insert"]>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;

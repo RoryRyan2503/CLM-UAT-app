@@ -98,6 +98,7 @@ Fill in `.env.local`:
    - `supabase/migrations/0002_storage.sql` — creates the private `evidence` Storage bucket.
   - `supabase/migrations/0003_result_usability_questions.sql` — adds nullable per-vendor usability answers.
   - `supabase/migrations/0004_persona_assignments.sql` — adds reusable personas, persona-case defaults, tester persona links, and soft-removable assignments. Existing assignment rows default active; no results are deleted or reset.
+  - `supabase/migrations/0005_evidence_setting.sql` — adds the Admin-controlled evidence collection setting. Evidence becomes optional for Pass/Fail, and disabling the setting hides controls and blocks new uploads without deleting existing evidence.
 3. Run `supabase/seed.sql` (or let `npm run db:seed` do it) to seed the two vendors.
 4. Create an admin:
    ```bash
@@ -169,7 +170,13 @@ open advisories but are dev-only tooling, never shipped to production.
 4. Re-run `npm run db:seed` / `npm run db:create-admin` locally (pointed at the same project via
    `.env.local`) whenever you need to import/re-import test cases or create another admin.
 
-## 6. Project structure
+## 6. On-premises Windows Server deployment
+
+For the first phase, see [docs/windows-app-hosted-supabase.md](docs/windows-app-hosted-supabase.md) to run the Next.js app on Windows Server while keeping PostgreSQL, Auth, and evidence Storage in the existing hosted Supabase project. This does not move UAT data or evidence on-premises.
+
+For the later full on-premises target, see [docs/on-prem-windows.md](docs/on-prem-windows.md), which covers Supabase in a Linux VM under Hyper-V. If the server must remain Windows-only, [docs/windows-postgresql-migration.md](docs/windows-postgresql-migration.md) describes the larger refactor required to replace Supabase with native PostgreSQL, local Admin authentication, and local evidence storage.
+
+## 7. Project structure
 
 ```
 app/                       Routes (tester + admin), Server Actions, API route handlers

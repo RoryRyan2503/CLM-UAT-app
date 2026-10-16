@@ -2,6 +2,13 @@ import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/adminClient";
 import { AppError } from "@/lib/actionResult";
 import { EVIDENCE_BUCKET } from "@/lib/constants";
+import { getEvidenceEnabled } from "@/lib/data/appSettings";
+
+async function assertEvidenceCollectionEnabled() {
+  if (!(await getEvidenceEnabled())) {
+    throw new AppError("FORBIDDEN", "Evidence collection is disabled by an administrator.");
+  }
+}
 
 async function assertTesterOwnsResult(testerId: string, testResultId: string) {
   const supabase = createSupabaseAdminClient();
@@ -21,6 +28,7 @@ async function assertTesterOwnsResult(testerId: string, testResultId: string) {
 
 export async function createEvidenceUploadUrl(testerId: string, testResultId: string, fileName: string) {
   const supabase = await assertTesterOwnsResult(testerId, testResultId);
+  await assertEvidenceCollectionEnabled();
   const safeName = fileName.replace(/[^a-zA-Z0-9_.-]/g, "_");
   const path = `${testResultId}/${Date.now()}-${safeName}`;
 
@@ -36,6 +44,7 @@ export async function registerEvidenceFile(
   params: { path: string; fileName: string; mimeType: string; sizeBytes: number },
 ) {
   const supabase = await assertTesterOwnsResult(testerId, testResultId);
+  await assertEvidenceCollectionEnabled();
   const { data, error } = await supabase
     .from("evidence")
     .insert({
@@ -55,6 +64,7 @@ export async function registerEvidenceFile(
 
 export async function registerEvidenceUrl(testerId: string, testResultId: string, url: string) {
   const supabase = await assertTesterOwnsResult(testerId, testResultId);
+  await assertEvidenceCollectionEnabled();
   const { data, error } = await supabase
     .from("evidence")
     .insert({ test_result_id: testResultId, kind: "url", url, created_by_tester_id: testerId })

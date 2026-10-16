@@ -3,6 +3,7 @@ import Link from "next/link";
 import { requireTesterSession } from "@/lib/auth/testerSession";
 import { getTestCaseWorkflow } from "@/lib/data/testCaseWorkflow";
 import { listAssignmentsForTester } from "@/lib/data/assignments";
+import { getEvidenceEnabled } from "@/lib/data/appSettings";
 import { AppError } from "@/lib/actionResult";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -27,7 +28,10 @@ export default async function TestCasePage({ params }: { params: Promise<{ id: s
     throw error;
   }
 
-  const allAssignments = await listAssignmentsForTester(tester.id);
+  const [allAssignments, evidenceEnabled] = await Promise.all([
+    listAssignmentsForTester(tester.id),
+    getEvidenceEnabled(),
+  ]);
   const currentIndex = allAssignments.findIndex((a) => a.testCaseUuid === id);
   const nextAssignment = allAssignments[currentIndex + 1];
 
@@ -81,6 +85,7 @@ export default async function TestCasePage({ params }: { params: Promise<{ id: s
             assignmentId={workflow.ironclad.assignment.id}
             result={workflow.ironclad.result}
             evidence={workflow.ironclad.evidence}
+            evidenceEnabled={evidenceEnabled}
             vendorId={workflow.ironclad.assignment.vendor_id}
           />
         </TabsContent>
@@ -91,6 +96,7 @@ export default async function TestCasePage({ params }: { params: Promise<{ id: s
             assignmentId={workflow.sirion.assignment.id}
             result={workflow.sirion.result}
             evidence={workflow.sirion.evidence}
+            evidenceEnabled={evidenceEnabled}
             vendorId={workflow.sirion.assignment.vendor_id}
           />
         </TabsContent>

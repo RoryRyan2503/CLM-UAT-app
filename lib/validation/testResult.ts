@@ -56,7 +56,6 @@ export function getConditionalRequirementErrors(input: TestResultDraftInput): Fi
     if (!input.severity || input.severity === "N/A") {
       errors.severity = "A specific severity is required for Fail.";
     }
-    if (!input.evidence) errors.evidence = "Evidence is required for Fail.";
     if (!input.defectId) errors.defectId = "A linked defect is required for Fail.";
   }
 
@@ -70,7 +69,6 @@ export function getConditionalRequirementErrors(input: TestResultDraftInput): Fi
 
   if (input.status === "Pass") {
     if (!input.actualResult?.trim()) errors.actualResult = "Actual result is required for Pass.";
-    if (!input.evidence) errors.evidence = "Evidence is required for Pass.";
     if (input.grade !== "A" && input.grade !== "B") {
       errors.grade = "Grade must be A or B for Pass.";
     }
