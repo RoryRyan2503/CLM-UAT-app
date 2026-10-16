@@ -8,6 +8,22 @@ import { isRateLimited, recordLoginAttempt } from "@/lib/auth/rateLimit";
 import { testerLoginSchema } from "@/lib/validation/tester";
 import { AppError, runAction } from "@/lib/actionResult";
 
+function getSafeCauseChain(error: unknown) {
+  const causes: { name?: string; code?: string }[] = [];
+  let current = error;
+
+  for (let depth = 0; depth < 4 && current && typeof current === "object"; depth += 1) {
+    const cause = current as { name?: unknown; code?: unknown; cause?: unknown };
+    causes.push({
+      name: typeof cause.name === "string" ? cause.name : undefined,
+      code: typeof cause.code === "string" ? cause.code : undefined,
+    });
+    current = cause.cause;
+  }
+
+  return causes;
+}
+
 export async function testerLoginAction(formData: FormData) {
   return runAction(async () => {
     const parsed = testerLoginSchema.safeParse({
@@ -83,11 +99,18 @@ export async function adminLoginAction(formData: FormData) {
         user_banned: "This Supabase Auth user is disabled or banned. Check its status under Authentication → Users.",
         over_request_rate_limit: "Too many sign-in attempts. Wait a few minutes and try again.",
       };
+      if (error.message.toLowerCase().includes("fetch failed")) {
+        console.error("Supabase Auth sign-in request failed", {
+          authCode: error.code,
+          status: error.status,
+          causeChain: getSafeCauseChain(error),
+        });
+      }
       throw new AppError(
         "UNAUTHENTICATED",
         messageByCode[error.code ?? ""] ??
           (error.message.toLowerCase().includes("fetch failed")
-            ? "The Next.js server could not establish trusted HTTPS to Supabase. Stop it and run npm run dev again; this project's script enables the Windows system CA store while keeping TLS verification on."
+            ? "The sign-in request to Supabase failed. Check the Next.js server log for its network diagnostic code."
             : `Supabase sign-in failed (HTTP ${error.status || "unknown"}).`),
       );
     }
