@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { getTesterSession } from "@/lib/auth/testerSession";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { TesterLoginForm } from "@/components/tester-login-form";
@@ -23,9 +24,9 @@ export default async function LoginPage() {
           <TesterLoginForm />
         </CardContent>
       </Card>
-      <a href="/admin/login" className="mt-6 text-sm text-foreground-muted hover:text-foreground hover:underline">
+      <Link href="/admin/login" className="mt-6 text-sm text-foreground-muted hover:text-foreground hover:underline">
         Admin sign-in
-      </a>
+      </Link>
     </div>
   );
 }

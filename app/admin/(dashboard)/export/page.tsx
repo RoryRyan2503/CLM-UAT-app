@@ -15,10 +15,10 @@ export default function AdminExportPage() {
         <ExportCard
           title="Combined results"
           description="All testers, both vendors, one worksheet."
-          href="/api/export/combined"
+          href="/clm-uat/api/export/combined"
         />
-        <ExportCard title="Ironclad only" description="Ironclad assignments and results." href="/api/export/vendor/ironclad" />
-        <ExportCard title="Sirion only" description="Sirion assignments and results." href="/api/export/vendor/sirion" />
+        <ExportCard title="Ironclad only" description="Ironclad assignments and results." href="/clm-uat/api/export/vendor/ironclad" />
+        <ExportCard title="Sirion only" description="Sirion assignments and results." href="/clm-uat/api/export/vendor/sirion" />
       </div>
     </div>
   );
