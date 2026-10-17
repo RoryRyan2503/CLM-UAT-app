@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Trash2 } from "lucide-react";
+import { Download, FileUp, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,6 +19,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import {
+  bulkCreateTestersAction,
   createTesterAction,
   deleteTesterAction,
   resetAccessCodeAction,
@@ -30,15 +31,35 @@ import type { Database } from "@/lib/types/database";
 
 type TesterRow = Database["public"]["Tables"]["testers"]["Row"];
 type PersonaOption = { id: string; name: string };
+type BulkCreatedTester = { name: string; email: string; department: string; persona: string; accessCode: string };
+type BulkImportError = { rowNumber: number; message: string };
+
+function csvCell(value: string): string {
+  const safeValue = /^[\s]*[=+\-@]/.test(value) ? `'${value}` : value;
+  return `"${safeValue.replace(/"/g, '""')}"`;
+}
+
+function downloadCsv(fileName: string, rows: string[][]) {
+  const content = rows.map((row) => row.map(csvCell).join(",")).join("\r\n");
+  const url = URL.createObjectURL(new Blob([`\uFEFF${content}`], { type: "text/csv;charset=utf-8" }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
 
 export function TestersManager({ testers, personas }: { testers: TesterRow[]; personas: PersonaOption[] }) {
   const router = useRouter();
   const [createOpen, setCreateOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<TesterRow | null>(null);
   const [createPersonaId, setCreatePersonaId] = useState("");
   const [editPersonaId, setEditPersonaId] = useState("");
   const [issuedCode, setIssuedCode] = useState<{ name: string; code: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<TesterRow | null>(null);
+  const [bulkErrors, setBulkErrors] = useState<BulkImportError[]>([]);
+  const [bulkCreated, setBulkCreated] = useState<BulkCreatedTester[]>([]);
   const [isPending, startTransition] = useTransition();
 
   function handleCreate(formData: FormData) {
@@ -52,6 +73,39 @@ export function TestersManager({ testers, personas }: { testers: TesterRow[]; pe
       setIssuedCode({ name: formData.get("name") as string, code: res.data.accessCode });
       router.refresh();
     });
+  }
+
+  function handleBulkCreate(formData: FormData) {
+    startTransition(async () => {
+      setBulkErrors([]);
+      setBulkCreated([]);
+      const res = await bulkCreateTestersAction(formData);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      if (res.data.errors.length > 0) {
+        setBulkErrors(res.data.errors);
+        return;
+      }
+      setBulkCreated(res.data.created);
+      toast.success(`Created ${res.data.created.length} testers. Save their access codes now.`);
+      router.refresh();
+    });
+  }
+
+  function downloadRosterTemplate() {
+    downloadCsv("tester-roster-template.csv", [
+      ["Name", "Email", "Department", "Persona"],
+      ["Example Tester", "example@example.com", "Legal", personas[0]?.name ?? ""],
+    ]);
+  }
+
+  function downloadBulkCodes() {
+    downloadCsv("tester-access-codes.csv", [
+      ["Name", "Email", "Department", "Persona", "Access Code"],
+      ...bulkCreated.map((tester) => [tester.name, tester.email, tester.department, tester.persona, tester.accessCode]),
+    ]);
   }
 
   function openEdit(tester: TesterRow) {
@@ -107,7 +161,91 @@ export function TestersManager({ testers, personas }: { testers: TesterRow[]; pe
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex justify-end">
+      <div className="flex flex-wrap justify-end gap-2">
+        <Dialog open={bulkOpen} onOpenChange={(open) => {
+          setBulkOpen(open);
+          if (!open) {
+            setBulkErrors([]);
+            setBulkCreated([]);
+          }
+        }}>
+          <DialogTrigger asChild>
+            <Button type="button" variant="outline" disabled={!personas.length}>
+              <FileUp /> Import testers
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Import testers</DialogTitle>
+              <DialogDescription>
+                Upload a CSV or Excel roster with Name and Persona columns. Email and Department are optional.
+                Persona values must match a configured persona. Up to 100 testers can be imported at once.
+              </DialogDescription>
+            </DialogHeader>
+
+            {bulkCreated.length === 0 ? (
+              <form action={handleBulkCreate} className="flex flex-col gap-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-sm text-foreground-muted">Required columns: Name, Persona</span>
+                  <Button type="button" variant="outline" size="sm" onClick={downloadRosterTemplate}>
+                    <Download /> Download CSV template
+                  </Button>
+                </div>
+                <Input name="file" type="file" accept=".csv,.xlsx,.xls" required disabled={isPending} />
+                <p className="text-xs text-foreground-muted">Maximum file size: 2 MB. Access codes are generated after validation and shown once.</p>
+                {bulkErrors.length > 0 ? (
+                  <div className="max-h-56 overflow-auto rounded-md border border-critical p-3" role="alert">
+                    <p className="mb-2 text-sm font-semibold">No testers were created. Correct these rows and upload again:</p>
+                    <ul className="flex flex-col gap-1 text-sm">
+                      {bulkErrors.map((error, index) => (
+                        <li key={`${error.rowNumber}-${index}`}>Row {error.rowNumber}: {error.message}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                <DialogFooter>
+                  <Button type="submit" disabled={isPending || !personas.length}>
+                    <FileUp /> {isPending ? "Importing…" : "Validate and import"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            ) : (
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-medium">Created {bulkCreated.length} testers. Save these codes now; they cannot be shown again.</p>
+                  <Button type="button" onClick={downloadBulkCodes}>
+                    <Download /> Download access codes
+                  </Button>
+                </div>
+                <div className="max-h-96 overflow-auto rounded-md border border-border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Email</TableHead>
+                        <TableHead>Persona</TableHead>
+                        <TableHead>Access code</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {bulkCreated.map((tester, index) => (
+                        <TableRow key={`${tester.email}-${index}`}>
+                          <TableCell>{tester.name}</TableCell>
+                          <TableCell>{tester.email || "—"}</TableCell>
+                          <TableCell>{tester.persona}</TableCell>
+                          <TableCell><code className="font-mono">{tester.accessCode}</code></TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setBulkOpen(false)}>Done</Button>
+                </DialogFooter>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild>
             <Button>Add tester</Button>

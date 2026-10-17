@@ -4,6 +4,7 @@ import { AppError } from "@/lib/actionResult";
 import { generateAccessCode, hashAccessCodeForLookup, hashAccessCodeForStorage } from "@/lib/auth/accessCodes";
 import type { CreateTesterInput } from "@/lib/validation/tester";
 import type { Database } from "@/lib/types/database";
+import type { TesterRosterError, TesterRosterRow } from "@/lib/import/parseTesterRoster";
 
 type TesterRow = Database["public"]["Tables"]["testers"]["Row"];
 
@@ -41,6 +42,67 @@ export async function createTester(input: CreateTesterInput): Promise<{ tester: 
     if (error instanceof AppError) throw error;
     throw new AppError("VALIDATION", "Unable to create tester. The name or code may already be in use.");
   }
+}
+
+export async function createTestersBulk(inputRows: TesterRosterRow[]): Promise<{
+  created: { name: string; email: string; department: string; persona: string; accessCode: string }[];
+  errors: TesterRosterError[];
+}> {
+  if (inputRows.length === 0) return { created: [], errors: [{ rowNumber: 1, message: "No valid tester rows found." }] };
+  if (inputRows.length > 100) {
+    return { created: [], errors: [{ rowNumber: 1, message: "Import at most 100 testers per file." }] };
+  }
+
+  return withTransaction(async (client) => {
+    await client.query("lock table testers in share row exclusive mode");
+    const personaNames = [...new Set(inputRows.map((row) => row.persona.trim().toLowerCase()))];
+    const { rows: personas } = await client.query<{ id: string; name: string }>(
+      "select id, name from personas where lower(btrim(name)) = any($1::text[])",
+      [personaNames],
+    );
+    const personaByName = new Map(personas.map((persona) => [persona.name.trim().toLowerCase(), persona]));
+    const errors: TesterRosterError[] = [];
+
+    for (const row of inputRows) {
+      if (!personaByName.has(row.persona.trim().toLowerCase())) {
+        errors.push({ rowNumber: row.rowNumber, message: `Persona "${row.persona}" is not configured.` });
+      }
+    }
+
+    const emails = [...new Set(inputRows.map((row) => row.email.trim().toLowerCase()).filter(Boolean))];
+    if (emails.length > 0) {
+      const { rows: existing } = await client.query<{ email: string }>(
+        "select lower(email) as email from testers where lower(email) = any($1::text[])",
+        [emails],
+      );
+      const existingEmails = new Set(existing.map((row) => row.email));
+      for (const row of inputRows) {
+        const email = row.email.trim().toLowerCase();
+        if (email && existingEmails.has(email)) {
+          errors.push({ rowNumber: row.rowNumber, message: `Email "${row.email}" already belongs to a tester.` });
+        }
+      }
+    }
+
+    if (errors.length > 0) return { created: [], errors };
+
+    const created: { name: string; email: string; department: string; persona: string; accessCode: string }[] = [];
+    for (const row of inputRows) {
+      const persona = personaByName.get(row.persona.trim().toLowerCase());
+      if (!persona) throw new AppError("VALIDATION", "A selected persona is no longer available.");
+      const accessCode = generateAccessCode();
+      await client.query(
+        `insert into testers
+           (name, email, department, persona, persona_id, access_code_hash, access_code_lookup)
+         values ($1, $2, $3, $4, $5, $6, $7)`,
+        [row.name, row.email || null, row.department || null, persona.name, persona.id,
+          hashAccessCodeForStorage(accessCode), hashAccessCodeForLookup(accessCode)],
+      );
+      created.push({ ...row, persona: persona.name, accessCode });
+    }
+
+    return { created, errors: [] };
+  });
 }
 
 export async function updateTester(testerId: string, input: Partial<CreateTesterInput>) {
