@@ -240,6 +240,21 @@ database and evidence directory:
 - New Next.js port: `127.0.0.1:3001`
 - New WinSW service ID: `CLM-UAT-V2`
 
+For the current **sandbox test** instance that was just created, use these actual values instead
+of the later production-import names in this runbook:
+
+- PostgreSQL endpoint: `127.0.0.1:5433`
+- Sandbox database/runtime role: `clm_v2_sandbox` / `clm_v2_app`
+- Sandbox migrator role: `clm_v2_migrator`
+- Sandbox evidence path: `C:\ProgramData\CLM-UAT-v2\evidence`
+- V2 app directory and port: `C:\Apps\clm-uat-v2` / `127.0.0.1:3001`
+
+Create `C:\Apps\clm-uat-v2\.env.production` with the sandbox runtime connection, the existing
+`ACCESS_CODE_PEPPER`, and the sandbox evidence directory. URL-encode reserved characters in the
+database password. Do not put the migrator or `postgres` password in this file. Check the file
+ACL so only the V2 service identity and authorized administrators can read it. The sandbox will
+contain only the rows you seeded/created; it is not the imported production data yet.
+
 The app's base path remains `/clm-uat`, so give the test deployment a **different DNS hostname**
 and IIS binding, for example `clm-uat-v2.company.example`, proxying to port 3001. Test at
 `https://clm-uat-v2.company.example/clm-uat/login`. This avoids changing the app base path or
@@ -263,10 +278,63 @@ Use a separate service configuration, for example:
 </service>
 ```
 
-Install it under its own WinSW service wrapper and configure a dedicated least-privilege service
-identity with access to only the V2 app configuration, V2 evidence directory, PostgreSQL, and
-logs. Configure the V2 site's IIS proxy to `http://127.0.0.1:3001`; do not expose port 3001
-directly. Keep PostgreSQL loopback-only.
+Before installing the service, test the production server process in the foreground from an
+elevated/deployment PowerShell window:
+
+```powershell
+Set-Location C:\Apps\clm-uat-v2
+$env:NODE_ENV = 'production'
+npm.cmd run start -- --hostname 127.0.0.1 --port 3001
+```
+
+Confirm `http://127.0.0.1:3001/clm-uat/admin/login` loads locally, then stop it with Ctrl+C.
+Do not run it at the same time as the service on port 3001.
+
+For WinSW, put a copy of the WinSW executable and a matching XML file together in a new
+directory, for example `C:\Apps\clm-uat-v2-service\clm-uat-v2-service.exe` and
+`clm-uat-v2-service.xml`. The XML file must have the same base name as the executable. Install
+and start only the V2 service:
+
+```powershell
+Set-Location C:\Apps\clm-uat-v2-service
+& .\clm-uat-v2-service.exe install
+```
+
+In `services.msc`, set **CLM-UAT-V2** to a dedicated non-administrator service account, then start
+it. Grant that identity read access to `C:\Apps\clm-uat-v2\.env.production`, read/execute on
+the app files, modify access to the V2 evidence directory and WinSW log directory, and no access
+to the old app's secrets/evidence. Verify `Get-Service CLM-UAT-V2` reports `Running` and that
+`http://127.0.0.1:3001/clm-uat/admin/login` works locally. Do not modify or restart `CLM-UAT`.
+
+### Configure a separate IIS site for V2
+
+This requires an approved DNS name and a TLS certificate for it. Use a distinct name such as
+`clm-uat-v2.company.example`; never bind the V2 site to the existing production hostname during
+testing.
+
+1. Install IIS, URL Rewrite, and Application Request Routing (ARR) if they are not already
+   installed. In IIS Manager, select the server node, open **Application Request Routing Cache**
+   > **Server Proxy Settings**, check **Enable proxy**, and apply. Leave the existing site's
+   binding and proxy rule unchanged.
+2. Create an empty IIS web root, for example `C:\Apps\clm-uat-v2-iis`, and create a new IIS site
+   with that physical path. Add a binding for the V2 hostname on HTTPS/443 using its approved
+   certificate. If there is an HTTP binding, make it redirect to HTTPS under your organization's
+   policy.
+3. Add an inbound URL Rewrite rule scoped only to the V2 site. Match `(.*)` and rewrite to
+   `http://127.0.0.1:3001/{R:1}`. Preserve the incoming path exactly: the Next app already has
+   base path `/clm-uat`, so a browser request to `/clm-uat/login` must reach Node as
+   `/clm-uat/login`, not `/login` and not `/clm-uat/clm-uat/login`.
+4. In ARR proxy settings, preserve the original host header so Next.js Server Action origin
+   checks see the public V2 hostname. Forward the usual `X-Forwarded-For` and
+   `X-Forwarded-Proto` headers. Do not add `clm-uat-v2.company.example` to the **old** site's
+   bindings or rewrite rules.
+5. Allow inbound HTTPS/443 only from approved client networks. Keep ports 3000, 3001, 5432, and
+   5433 private; do not create remote firewall rules for Node or PostgreSQL.
+
+From a client workstation, test `https://clm-uat-v2.company.example/clm-uat/admin/login` and
+`/clm-uat/login`. Verify sign-in, assignment pages, save/submit, export, and local evidence
+upload/download. Also try an unauthenticated evidence download and confirm it is rejected. Keep
+the old production URL open and functioning throughout.
 
 Complete the V2 database migration and acceptance checklist at the new hostname while the old
 app remains available. For final cutover, freeze tester writes, perform the final import into a
