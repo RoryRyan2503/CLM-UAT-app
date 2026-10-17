@@ -2,27 +2,18 @@
 
 import { requireTesterSession } from "@/lib/auth/testerSession";
 import {
-  createEvidenceUploadUrl,
-  registerEvidenceFile,
+  uploadEvidenceFile,
   registerEvidenceUrl,
-  getSignedEvidenceUrl,
 } from "@/lib/data/evidence";
-import { runAction } from "@/lib/actionResult";
+import { APP_BASE_PATH } from "@/lib/constants";
+import { AppError, runAction } from "@/lib/actionResult";
 
-export async function createEvidenceUploadUrlAction(testResultId: string, fileName: string) {
+export async function uploadEvidenceFileAction(testResultId: string, formData: FormData) {
   return runAction(async () => {
     const tester = await requireTesterSession();
-    return createEvidenceUploadUrl(tester.id, testResultId, fileName);
-  });
-}
-
-export async function registerEvidenceFileAction(
-  testResultId: string,
-  params: { path: string; fileName: string; mimeType: string; sizeBytes: number },
-) {
-  return runAction(async () => {
-    const tester = await requireTesterSession();
-    return registerEvidenceFile(tester.id, testResultId, params);
+    const file = formData.get("file");
+    if (!(file instanceof File)) throw new AppError("VALIDATION", "Choose a file to upload.");
+    return uploadEvidenceFile(tester.id, testResultId, file);
   });
 }
 
@@ -35,7 +26,7 @@ export async function registerEvidenceUrlAction(testResultId: string, url: strin
 
 export async function getSignedEvidenceUrlAction(evidenceId: string) {
   return runAction(async () => {
-    const tester = await requireTesterSession();
-    return getSignedEvidenceUrl(evidenceId, { testerId: tester.id });
+    await requireTesterSession();
+    return `${APP_BASE_PATH}/api/evidence?id=${encodeURIComponent(evidenceId)}`;
   });
 }

@@ -1,39 +1,24 @@
-# Native PostgreSQL on Windows Server: setup and application migration
+# Native Windows Server deployment and Supabase cutover
 
-## Important: PostgreSQL is not a drop-in Supabase replacement
-
-The current app does not speak the PostgreSQL wire protocol. It uses `@supabase/supabase-js` to call Supabase's REST/database API and uses Supabase Auth and Supabase Storage. Changing `.env.local` to a PostgreSQL connection string will not work.
-
-A native Windows PostgreSQL deployment is viable, but it requires replacing three things:
-
-1. Supabase database queries with parameterized SQL using the Node.js `pg` driver.
-2. Supabase Auth for Admins with app-managed Admin accounts and sessions. Tester access-code authentication already belongs to the app, but its database calls must be converted.
-3. Supabase Storage with protected local file storage and authenticated upload/download endpoints (or another approved on-prem file service).
-
-Do not point the current production app at the PostgreSQL server until this refactor is complete and tested. Keep the existing Supabase project as the live system and migration source until cutover is approved.
-
-## Architecture on one Windows Server
+The app runtime now uses native PostgreSQL, local administrator accounts, and local evidence
+files. It no longer calls Supabase for authentication, database queries, or storage. The hosted
+Supabase project remains the migration source until a rehearsed cutover is approved.
 
 ```text
-Tester/admin browsers
-        | HTTPS 443
-        v
-IIS reverse proxy + TLS
-        |
-        +--> Next.js Node service (127.0.0.1:3000)
-        |       | PostgreSQL TCP via loopback
-        |       +--> Evidence files in a private data directory
-        |
-        +--> PostgreSQL Windows service (127.0.0.1:5432)
+Browsers --HTTPS--> IIS --loopback--> Next.js/Node service
+                                      |-- loopback TCP --> PostgreSQL Windows service
+                                      `-- private disk --> evidence directory
 ```
 
-Browsers contact only the HTTPS app. They must never connect directly to PostgreSQL or the evidence directory. PostgreSQL and the evidence directory should be on persistent storage and included in separate, tested backup/restore procedures.
+Browsers must not connect to PostgreSQL or the evidence directory. Keep PostgreSQL bound to
+loopback and evidence outside the application folder/web root. No Hyper-V, Docker, Linux VM,
+Redis, or separate object-storage service is needed for this single-server design.
 
-## Phase 1: verify Windows Server capacity and approval
+## 1. Check server capacity
 
-Before installing software, ask IT to confirm Windows Server 2022 is patched, that you have permission to install a Windows service, and that IIS/HTTPS and backups are approved. For this small UAT app, use 4 CPU cores, 8 GB RAM, and 50 GB free SSD as an initial planning baseline, then add room for the database, evidence, logs, and backups. These are not benchmarked capacity guarantees; measure after pilot usage.
-
-Run this read-only inventory in PowerShell on the actual server:
+The app is small, but actual capacity depends on concurrent testers, workbook sizes, database
+growth, and evidence retention. Do not treat a generic RAM estimate as a guarantee. Inventory
+the actual Windows Server before installing anything:
 
 ```powershell
 Get-ComputerInfo | Select-Object WindowsProductName, WindowsVersion, OsBuildNumber
@@ -41,95 +26,270 @@ Get-CimInstance Win32_ComputerSystem | Select-Object NumberOfLogicalProcessors, 
 Get-Volume | Select-Object DriveLetter, FileSystemLabel, @{Name='Size_GB';Expression={[math]::Round($_.Size / 1GB, 1)}}, @{Name='Free_GB';Expression={[math]::Round($_.SizeRemaining / 1GB, 1)}}
 ```
 
-Share only the OS version, RAM, CPU count, and free disk space when reviewing capacity; omit hostnames, IP addresses, usernames, and passwords.
+Measure idle and peak memory/disk after the staging pilot. The app currently caps each evidence
+upload at 10 MB; agree retention and backup capacity separately from application storage.
 
-## Phase 2: install PostgreSQL as a Windows service
+## 2. Install and restrict PostgreSQL
 
-1. Download the current supported PostgreSQL Windows installer through the [official PostgreSQL Windows download page](https://www.postgresql.org/download/windows/), which links to the EDB installer. For Windows Server 2022, PostgreSQL 17 or 18 is supported by the current Windows platform matrix. Choose the latest patched minor release in a major version approved by IT; PostgreSQL 17 is a conservative starting point if IT prefers a longer-established major version.
-2. Verify the installer source and signature according to IT policy. On the component screen, install **PostgreSQL Server** and **Command Line Tools** (`psql`, `pg_dump`, `pg_restore`). pgAdmin is optional. StackBuilder is not required for this app.
-3. Choose an IT-approved install directory and a persistent data directory. If a separate data SSD exists, place the data directory there, e.g. `D:\PostgreSQL\data`, not in a user profile, OneDrive, or the application directory.
-4. Use port `5432` unless IT has an approved port plan. Set a unique strong password for the built-in PostgreSQL `postgres` administrator. Do not reuse the Windows password. Store it in the corporate password manager; never put it in source control or chat.
-5. Finish setup and confirm the PostgreSQL service is set to Automatic and running in `services.msc`. Use a current pgAdmin or `psql` client to connect locally.
-6. Keep PostgreSQL listening on loopback only. In `postgresql.conf`, verify `listen_addresses = 'localhost'`. Keep `pg_hba.conf` limited to loopback entries using `scram-sha-256`; do not add `0.0.0.0/0`, `trust`, or broad subnet rules. The PostgreSQL default is loopback-only. Do not create an inbound Windows Firewall rule for port 5432.
-7. Keep PostgreSQL patched under IT change control. Back up the database with `pg_dump`/`pg_restore` or an approved PostgreSQL backup tool, and test restoring to a clean database. A VM snapshot alone is not a database backup.
+1. Download a supported PostgreSQL Windows installer from the official
+   [PostgreSQL Windows download page](https://www.postgresql.org/download/windows/) and verify
+   it under your organization's software policy. Install PostgreSQL Server and Command Line
+   Tools (`psql`, `pg_dump`, `pg_restore`); pgAdmin is optional.
+   If the interactive EDB installer fails or is blocked, that same official page links an EDB
+   ZIP archive of PostgreSQL binaries for advanced users. Use a patched PostgreSQL 17 or 18
+   release (both are listed as tested on Windows Server 2022), extract it to a fixed folder,
+   initialize the data directory with `initdb`, and register it as a Windows service with a
+   dedicated non-admin service identity. Do not leave the service running as LocalSystem. Have
+   IT provision the service identity, grant it access to the data/log directories, and approve
+   the service registration. The ZIP avoids the installer UI, but database initialization,
+   service configuration, patching, and backups remain required.
+2. Put the PostgreSQL data directory on approved persistent storage, not under a user profile,
+   OneDrive, or the application release directory. Set the PostgreSQL service to Automatic.
+3. Configure `listen_addresses = 'localhost'`. Keep `pg_hba.conf` restricted to loopback with
+   `scram-sha-256`; do not add a remote listen address, broad subnet, or `trust` rule. Do not
+   add a Windows Firewall rule for port 5432.
+4. Use separate migration-owner and runtime roles. Connect locally as the PostgreSQL
+   administrator and create the roles/database:
 
-Official references: [PostgreSQL Windows installers](https://www.postgresql.org/download/windows/), [connection settings](https://www.postgresql.org/docs/current/runtime-config-connection.html), and [client authentication / pg_hba.conf](https://www.postgresql.org/docs/current/auth-pg-hba-conf.html).
+   ```sql
+   CREATE ROLE clm_uat_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+   CREATE ROLE clm_uat_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+   CREATE DATABASE clm_uat OWNER clm_uat_migrator ENCODING 'UTF8';
+   ```
 
-## Phase 3: create a database and restricted app role
+   Set each role password interactively with `\password clm_uat_migrator` and
+   `\password clm_uat_app` in `psql`; do not put passwords in SQL files, command arguments, or
+   chat. Connect to `clm_uat` as the database administrator and grant the migration owner
+   schema creation rights, then runtime DML and sequence access:
 
-Use pgAdmin Query Tool connected as the PostgreSQL administrator, or `psql`. The following is a template, not a command to execute until the code migration is ready:
+   ```sql
+   GRANT CONNECT ON DATABASE clm_uat TO clm_uat_app;
+   GRANT USAGE, CREATE ON SCHEMA public TO clm_uat_migrator;
+   GRANT USAGE ON SCHEMA public TO clm_uat_app;
+   ```
 
-```sql
-CREATE ROLE clm_uat_app
-  LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
-CREATE DATABASE clm_uat OWNER postgres ENCODING 'UTF8';
+   After running migrations as `clm_uat_migrator`, grant runtime rights and defaults:
+
+   ```sql
+   GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO clm_uat_app;
+   GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO clm_uat_app;
+   ALTER DEFAULT PRIVILEGES FOR ROLE clm_uat_migrator IN SCHEMA public
+     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO clm_uat_app;
+   ALTER DEFAULT PRIVILEGES FOR ROLE clm_uat_migrator IN SCHEMA public
+     GRANT USAGE, SELECT ON SEQUENCES TO clm_uat_app;
+   REVOKE CREATE ON SCHEMA public FROM clm_uat_app;
+   ```
+
+   The running app must never use the migration-owner credentials.
+
+## 3. Configure the app and run native migrations
+
+Deploy a reviewed release to `C:\Apps\clm-uat`. Use a currently supported Node.js LTS version
+compatible with Next.js 16, and install dependencies from the lockfile:
+
+```powershell
+Set-Location C:\Apps\clm-uat
+npm ci
+npm test
+npm run lint
+npx tsc --noEmit -p tsconfig.json
+npm run build
 ```
 
-Set the role password interactively with `\password clm_uat_app` in `psql`; do not store a plaintext password in a `.sql` file or shell history. Connect to `clm_uat` as the migration administrator, then apply the native PostgreSQL schema migrations. The migration administrator owns schema changes; the app login must not be a superuser, database owner, or schema owner.
+Create a protected `C:\Apps\clm-uat\.env.production` with:
 
-After applying the schema, grant only the runtime privileges the app requires. For this app that will generally include `CONNECT`, schema `USAGE`, DML on its tables, and sequence access. Add default privileges for future tables/sequences created by the migration owner. Do not grant the runtime role `CREATE`, `CREATEDB`, `CREATEROLE`, or superuser rights.
+```dotenv
+DATABASE_URL=postgresql://clm_uat_app:<URL-ENCODED-PASSWORD>@127.0.0.1:5432/clm_uat
+ACCESS_CODE_PEPPER=<EXISTING-PRODUCTION-PEPPER>
+EVIDENCE_STORAGE_DIR=C:/ProgramData/CLM-UAT/evidence
+```
 
-The app's current Supabase migrations cannot be applied unchanged:
+Use an approved secrets manager or restrict the file ACL to the app service identity and
+authorized administrators. Quote dotenv values containing `#`. Preserve the existing
+`ACCESS_CODE_PEPPER` to keep current tester access-code hashes valid. Do not set any
+`NEXT_PUBLIC_` database variables.
 
-- `0001_init.sql` references `auth.users` in `admin_users` and enables RLS on tables.
-- `0002_storage.sql` inserts into Supabase's `storage.buckets` schema.
-- `0003` through `0005` contain PostgreSQL schema changes, but must be integrated into a new ordered native migration set and tested against the chosen PostgreSQL version.
-- RLS currently denies browser roles and is bypassed by Supabase's service-role key. A plain PostgreSQL login will not inherit that behavior. The native schema must remove/replace those RLS declarations or add a deliberately designed per-user RLS context. The simpler design for this app is private loopback-only PostgreSQL access, a least-privilege app role, and strict tester/admin ownership checks in the server data layer. Never expose the app DB role to a browser.
+For schema changes, create a short-lived protected `.env.migration` containing
+`MIGRATION_DATABASE_URL` for `clm_uat_migrator`, then run:
 
-Create a new directory such as `db/migrations/` for native PostgreSQL migrations. Keep the Supabase migration files intact for the existing hosted project until cutover is finished; do not rewrite them in place.
+```powershell
+npm run db:migrate
+Remove-Item .env.migration
+```
 
-## Phase 4: required application changes
+The migration runner is idempotent and serializes concurrent runs. Inspect `db/migrations/`
+before applying migrations. Keep migration credentials out of the WinSW service environment.
+After migrations, grant the runtime role the table and sequence permissions above.
 
-### Database/data access
+For a **new, empty deployment only**, seed vendors and initial test cases:
 
-- Add the `pg` package and `@types/pg`, and create one server-only `pg.Pool` module using a server-only `DATABASE_URL`.
-- Rewrite the 15 modules under `lib/data/` and the DB-backed login rate limiter to use parameterized SQL (`$1`, `$2`, ...), not string interpolation. Cover tester management, assignment/persona queries, dashboards, test workflows, results, comparisons, defects, evidence metadata, settings, audits, imports, and exports.
-- Reproduce current Supabase query behavior explicitly: embedded relation joins, `maybeSingle`, counts, upserts, optimistic `version` checks, and returned records. Add transactions for operations that update a result and its history together, and for multi-row assignment/import work.
-- Replace or generate the handwritten `Database` types to match the native schema. Use typed row interfaces for query results and validate Server Action inputs as today.
-- Retain all existing ownership checks and Admin authorization. Every query using IDs from a form/action must verify that the authenticated user may access that record. Use parameterized SQL everywhere.
+```powershell
+npm run db:seed -- "C:/approved/path/Honeywell_CLM_UAT_Tester_Draft.xlsx"
+```
 
-### Admin authentication
+For a new deployment, create the first local administrator. For a hosted-data migration, wait
+until after import. Create a protected temporary `.env.bootstrap` containing
+`ADMIN_BOOTSTRAP_PASSWORD` with a unique password of at least 14 characters, then run:
 
-- Replace `supabase.auth.signInWithPassword`, `signOut`, and `getUser` with a local `admin_users` account table containing a normalized unique email, password hash, active flag, and display name.
-- Hash Admin passwords using a modern password-hashing function (prefer Argon2id through a maintained library; alternatively use Node's built-in `scrypt` with a unique random salt and a carefully reviewed encoding/verification implementation). Never store a plaintext password.
-- Implement login throttling, generic invalid-credential messages, session expiry/revocation, and a random opaque HttpOnly/Secure/SameSite cookie whose token is stored only as a hash in a session table. Protect account creation/reset so only an authorized operator can create or reset an Admin.
-- Replace `lib/auth/adminSession.ts`, the Admin login/logout actions, `scripts/createAdmin.ts`, and Supabase session-refresh middleware. Remove Supabase Auth references from the Admin layout/login flow.
-- The existing `admin_users.auth_user_id` foreign key must be removed. Provide a script to bootstrap the first Admin securely, then use the Admin UI for subsequent management if needed.
+```powershell
+npm run db:create-admin -- admin@example.com "Admin Name"
+Remove-Item .env.bootstrap
+```
 
-### Evidence storage
+The script stores only a salted scrypt hash. Existing Supabase Auth passwords do not migrate;
+each admin must receive a new local password. Do not use a hardcoded/shared source password.
 
-- Recommended for a single Windows host: store binary evidence on disk outside the web root (e.g. `D:\CLM-UAT-Data\evidence`) and store only a random relative file key plus metadata in PostgreSQL. Do not use an untrusted original filename as a path.
-- Replace direct browser Supabase Storage calls in `components/evidence-manager.tsx` with authenticated app endpoints for upload and download. Upload and download handlers must verify tester ownership or Admin role, enforce file-size and allowed-type limits, use generated filenames, and prevent path traversal. Stream downloads only after authorization; do not serve the data directory as static files.
-- Ensure only the Windows service account and approved administrators can read the evidence directory. Include both PostgreSQL backups and the evidence directory in the backup policy; they must be restored as a consistent pair.
-- Preserve the existing Admin setting: disabled evidence hides the form and rejects new evidence requests; existing database metadata/files remain readable by authorized users. Evidence remains optional when enabled.
+## 4. Migrate hosted data and evidence
 
-### Configuration, middleware, and scripts
+Rehearse this against a **new, empty staging database** first. The importer refuses a target that
+already has application data. It copies application tables and Storage objects but deliberately
+does not copy Supabase Auth users, tester/admin sessions, login attempts, or historical admin
+credential links. Historical import rows retain their data, but `imported_by` is left null.
 
-- Replace `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` with server-only database and evidence-storage settings, for example `DATABASE_URL` and `EVIDENCE_STORAGE_DIR`.
-- Keep `ACCESS_CODE_PEPPER` server-only. Preserve its production value if you want existing tester access-code hashes to continue working.
-- Remove `@supabase/supabase-js` and `@supabase/ssr` only after all usage is gone. Rewrite `scripts/seed.ts`, `scripts/createAdmin.ts`, and import logic to use the native DB adapter.
-- Ensure the Next.js middleware/proxy no longer instantiates Supabase clients. Verify no browser bundle contains database credentials or filesystem paths.
+1. Keep the hosted project live while rehearsing. Confirm the source has migrations 0001 through
+   0005 and test the native app against a clean database first.
+2. Before the final import, schedule a write freeze so database rows and Storage objects form one
+   consistent snapshot. Keep the hosted project read-only during the cutover window.
+3. Run the importer on the Windows app server so it can write into the private evidence folder
+   and reach PostgreSQL on loopback. IT must first provide an approved outbound path from Node.js
+   to the hosted PostgreSQL endpoint and Storage API. Create a protected `.env.migration` with:
 
-## Phase 5: schema/data migration and cutover
+   ```dotenv
+   SOURCE_DATABASE_URL=<HOSTED-POSTGRES-CONNECTION-STRING>
+   SOURCE_SUPABASE_URL=https://<PROJECT-REF>.supabase.co
+   SOURCE_SUPABASE_SERVICE_KEY=<TEMPORARY-SERVICE-ROLE-KEY>
+   MIGRATION_DATABASE_URL=postgresql://clm_uat_migrator:<URL-ENCODED-PASSWORD>@127.0.0.1:5432/clm_uat
+   EVIDENCE_STORAGE_DIR=C:/ProgramData/CLM-UAT/evidence
+   ```
 
-Do this first against a staging PostgreSQL database. Keep hosted Supabase as the authoritative production system until the rehearsal passes.
+   These values are secrets. Do not commit or paste the file. The one-time importer requires
+   Node.js HTTPS access to Supabase Storage and PostgreSQL access to the hosted source. If the
+   server still gets Node `ECONNRESET`, ask IT to provide an approved temporary migration route
+   or IT-managed migration host/tunnel; do not expose port 5432 broadly or disable TLS
+   verification. The importer does not change or delete source data.
+4. Run `npm run db:import-hosted`. It copies testers, cases, vendors, assignments, results,
+   defects, comparisons, evidence metadata, history, settings, and import summaries. It downloads
+   each private evidence object, preserving its relative storage path. Files larger than 10 MB
+   must be reviewed and reduced or otherwise migrated under an approved policy before using this
+   importer.
+5. Verify source/target row counts, access-code login with the unchanged pepper, result history,
+   comparisons, and evidence downloads. Recreate admins locally, then run the complete functional
+   test checklist in staging.
+6. Test restoring a PostgreSQL backup plus the evidence directory together. If an import fails,
+   discard that staging database and evidence directory, create a fresh target, and rerun; do not
+   rerun into a partially imported target.
+7. At final cutover, freeze writes, take final source backups, import into the production target,
+   run smoke tests, and point the app service at the native database. Keep hosted Supabase
+   read-only for an agreed rollback period. Do not delete it until owners approve the cutover and
+   restore test.
 
-1. Make a verified hosted database backup and record row counts for testers, test cases, assignments, results, evidence metadata, defects, comparisons, result history, settings, and imports.
-2. Export PostgreSQL data using a Supabase-supported backup/dump procedure approved for your project. Restore into a staging native PostgreSQL database; resolve Supabase-owned schemas, extensions, grants, and migration-specific objects explicitly. Do not assume a raw SQL dump restores cleanly to plain PostgreSQL.
-3. Migrate all file objects from Supabase Storage to the protected Windows evidence directory and verify every evidence metadata row maps to a file. Database rows alone do not contain the binary files.
-4. Admin users need a deliberate migration plan: recreate Admins and reset their passwords, or migrate password hashes only if a tested process is approved. Preserve tester rows and `ACCESS_CODE_PEPPER` if retaining existing tester access codes. Revoke or expire old sessions so everyone signs in again.
-5. Apply the native migration set, grant runtime privileges, run the refactored app against staging, and test Admin/tester login, rate limiting, assignment ownership, drafts/submits, history, comparisons, defects, evidence upload/view, import/export, and evidence on/off settings.
-6. Test full restore of the native PostgreSQL database and evidence directory to a clean location. Check counts and sample evidence downloads after restore.
-7. At cutover, schedule a maintenance window, stop tester writes, take final database and evidence backups, restore final changes, run smoke tests, then change the production service to the native database. Preserve the hosted project read-only for an agreed rollback period.
-8. Do not delete the hosted project until business owners sign off on the new system and a rollback/restore test has passed.
+After success, remove `.env.migration`, `.env.bootstrap`, and any temporary source key from the
+migration workstation and server. Rotate the Supabase service key if it was exposed outside its
+normal secret store.
 
-## Suggested implementation order
+## 5. Protect evidence and service credentials
 
-1. Install PostgreSQL and verify it is local-only; this does not yet change the running app.
-2. Create and test native schema migrations in a separate database.
-3. Implement the `pg` adapter and convert the data/auth/storage modules in small slices with tests.
-4. Run the complete app against a staging native database and local evidence directory.
-5. Rehearse data and file migration, backups, restore, and cutover.
-6. Deploy behind IIS with HTTPS; allow inbound 443 only from approved user networks, and keep 5432 inaccessible remotely.
+Create the configured evidence folder outside `C:\Apps\clm-uat`, for example:
 
-This is a substantial but manageable refactor. A sensible first implementation milestone is a feature branch that adds the native migration set and a `pg` connection pool, then converts one read-only data module and validates it against a local PostgreSQL instance before touching authentication or evidence.
+```powershell
+New-Item -ItemType Directory -Force C:\ProgramData\CLM-UAT\evidence
+icacls C:\ProgramData\CLM-UAT\evidence /inheritance:r
+icacls C:\ProgramData\CLM-UAT\evidence /grant:r "<DOMAIN>\<SERVICE_ACCOUNT>:(OI)(CI)M" "SYSTEM:(OI)(CI)F" "BUILTIN\Administrators:(OI)(CI)F"
+```
+
+Replace the service account placeholder with the approved least-privilege identity and verify
+the ACL. The service needs read/write access; tester accounts must not have direct filesystem
+access. The app writes generated file keys, never user-controlled paths, and downloads are
+authenticated and sent as attachments.
+
+Configure WinSW or the approved Windows service manager with:
+
+- Executable: `C:\Program Files\nodejs\node.exe`
+- Working directory: `C:\Apps\clm-uat`
+- Arguments: `C:\Apps\clm-uat\node_modules\next\dist\bin\next start --hostname 127.0.0.1 --port 3000`
+- Environment: `NODE_ENV=production`; Next.js loads the protected `.env.production`
+- Log on as: a dedicated non-administrator account that can read app configuration, connect to
+  PostgreSQL loopback, and modify only the evidence/log directories
+- Startup: Automatic; rotate service logs and verify after reboot
+
+Do not run the service as `LocalSystem` or a domain administrator. Keep port 3000 bound to
+loopback. Do not expose port 5432 or the evidence directory to client networks.
+
+## 6. Put HTTPS in front and smoke-test
+
+Use IIS with URL Rewrite and ARR, or an approved reverse proxy. Bind the approved HTTPS
+certificate on port 443 and proxy to `http://127.0.0.1:3000`. The app uses base path `/clm-uat`.
+Allow inbound 443 only from approved client networks; do not create inbound rules for 3000 or
+5432. Preserve the original `Host` and `X-Forwarded-Host` headers so Next.js Server Action origin
+checks succeed.
+
+From a separate client workstation, verify `/clm-uat/login`, `/clm-uat/admin/login`, tester and
+admin login, assignment ownership, draft/save/submit, comparisons, defects, imports/exports,
+evidence upload/download, and the Admin evidence on/off setting. Confirm that direct unauthenticated
+downloads fail and evidence files are not reachable as static URLs.
+
+### Keep the existing app live during rollout
+
+Do not overwrite `C:\Apps\clm-uat`, rebuild its `.next` directory, or change the existing
+`CLM-UAT` service while preparing the replacement. Deploy a separate copy and use a separate
+database and evidence directory:
+
+- New app: `C:\Apps\clm-uat-v2`
+- New PostgreSQL database/runtime role: `clm_uat_v2` / `clm_uat_v2_app`
+- New evidence directory: `C:\ProgramData\CLM-UAT-v2\evidence`
+- New Next.js port: `127.0.0.1:3001`
+- New WinSW service ID: `CLM-UAT-V2`
+
+The app's base path remains `/clm-uat`, so give the test deployment a **different DNS hostname**
+and IIS binding, for example `clm-uat-v2.company.example`, proxying to port 3001. Test at
+`https://clm-uat-v2.company.example/clm-uat/login`. This avoids changing the app base path or
+conflicting with the old site's URL. Get the new DNS name and certificate through the normal IT
+process; don't use a hosts-file change as the production cutover.
+
+Use a separate service configuration, for example:
+
+```xml
+<service>
+   <id>CLM-UAT-V2</id>
+   <name>CLM UAT V2</name>
+   <description>CLM UAT replacement application</description>
+   <executable>C:\Program Files\nodejs\node.exe</executable>
+   <arguments>"C:\Apps\clm-uat-v2\node_modules\next\dist\bin\next" start --hostname 127.0.0.1 --port 3001</arguments>
+   <workingdirectory>C:\Apps\clm-uat-v2</workingdirectory>
+   <env name="NODE_ENV" value="production" />
+   <startmode>Automatic</startmode>
+   <log mode="roll" />
+   <onfailure action="restart" delay="10 sec" />
+</service>
+```
+
+Install it under its own WinSW service wrapper and configure a dedicated least-privilege service
+identity with access to only the V2 app configuration, V2 evidence directory, PostgreSQL, and
+logs. Configure the V2 site's IIS proxy to `http://127.0.0.1:3001`; do not expose port 3001
+directly. Keep PostgreSQL loopback-only.
+
+Complete the V2 database migration and acceptance checklist at the new hostname while the old
+app remains available. For final cutover, freeze tester writes, perform the final import into a
+fresh V2 database, recreate admin credentials, verify login and evidence, then change the
+existing production IIS binding's upstream from port 3000 to port 3001. Smoke-test the original
+production URL. Only after it succeeds should you stop the old `CLM-UAT` service. Keep its app
+folder and the old hosted database read-only for the agreed rollback period. Rollback is the
+reverse IIS upstream change plus restarting the old service; do not delete either old copy until
+the new backup/restore test and business sign-off are complete.
+
+If the server cannot install or run the PostgreSQL ZIP binaries under an approved service
+identity, stop before cutover. The current code is PostgreSQL-specific; SQLite is not a drop-in
+replacement and would require another tested data-layer conversion. Do not put the new app on the
+old hosted database or stop the existing service as a workaround.
+
+## 7. Backups, rollback, and monitoring
+
+Back up PostgreSQL and the evidence directory together using an approved schedule. For example,
+use `pg_dump -Fc` with a protected `PGPASSFILE`; do not put database passwords in command-line
+arguments or scheduled-task definitions. Keep backups on separate protected storage and test a
+restore to a clean database and evidence directory before go-live.
+
+Monitor Node/WinSW and IIS logs, PostgreSQL service health, disk space, failed logins, database
+backup completion, and evidence directory growth. Keep the hosted Supabase project read-only as
+the rollback source until the new service is accepted. A database restore without the matching
+evidence files is not a complete restore.

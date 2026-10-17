@@ -1,8 +1,6 @@
 import "server-only";
-import { createSupabaseAdminClient } from "@/lib/supabase/adminClient";
-import { AppError } from "@/lib/actionResult";
+import { query } from "@/lib/db/pool";
 import { isCompletedStatus } from "@/lib/constants";
-import { embeddedOne } from "@/lib/supabase/embedded";
 
 export interface TesterProgressRow {
   testerId: string;
@@ -29,35 +27,30 @@ export interface VendorProgressRow {
 }
 
 export async function getProgressOverview() {
-  const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from("assignments")
-    .select("tester_id, testers(name), vendor_id, vendors(slug, name), test_case_id, test_cases(functional_area), test_results(status)")
-    .eq("is_active", true);
-  if (error) throw new AppError("NOT_FOUND", "Unable to load progress.");
-
-  type Row = {
-    tester_id: string;
-    testers: { name: string } | null;
-    vendor_id: string;
-    vendors: { slug: string; name: string } | null;
-    test_case_id: string;
-    test_cases: { functional_area: string } | null;
-    test_results: { status: string } | { status: string }[] | null;
-  };
-  const rows = (data ?? []) as unknown as Row[];
+  const { rows } = await query<{
+    tester_id: string; tester_name: string | null; vendor_slug: string; vendor_name: string;
+    functional_area: string | null; status: string | null;
+  }>(
+    `select a.tester_id, t.name as tester_name, v.slug as vendor_slug, v.name as vendor_name,
+       tc.functional_area, tr.status
+     from assignments a join testers t on t.id = a.tester_id
+     join vendors v on v.id = a.vendor_id
+     join test_cases tc on tc.id = a.test_case_id
+     left join test_results tr on tr.assignment_id = a.id
+     where a.is_active = true`,
+  );
 
   const byTester = new Map<string, TesterProgressRow>();
   const byVendor = new Map<string, VendorProgressRow>();
   const byArea = new Map<string, FunctionalAreaProgressRow>();
 
   for (const row of rows) {
-    const completed = isCompletedStatus(embeddedOne(row.test_results)?.status);
-    const vendorSlug = row.vendors?.slug ?? "unknown";
+    const completed = isCompletedStatus(row.status);
+    const vendorSlug = row.vendor_slug;
 
     const tester = byTester.get(row.tester_id) ?? {
       testerId: row.tester_id,
-      testerName: row.testers?.name ?? "Unknown",
+      testerName: row.tester_name ?? "Unknown",
       completed: 0,
       total: 0,
       ironcladCompleted: 0,
@@ -78,7 +71,7 @@ export async function getProgressOverview() {
 
     const vendor = byVendor.get(vendorSlug) ?? {
       vendorSlug,
-      vendorName: row.vendors?.name ?? "Unknown",
+      vendorName: row.vendor_name,
       completed: 0,
       total: 0,
     };
@@ -86,7 +79,7 @@ export async function getProgressOverview() {
     if (completed) vendor.completed += 1;
     byVendor.set(vendorSlug, vendor);
 
-    const area = row.test_cases?.functional_area ?? "Unknown";
+    const area = row.functional_area ?? "Unknown";
     const areaRow = byArea.get(area) ?? { functionalArea: area, completed: 0, total: 0 };
     areaRow.total += 1;
     if (completed) areaRow.completed += 1;

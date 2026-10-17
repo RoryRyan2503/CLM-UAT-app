@@ -1,6 +1,5 @@
 import "server-only";
-import { createSupabaseAdminClient } from "@/lib/supabase/adminClient";
-import { AppError } from "@/lib/actionResult";
+import { withTransaction } from "@/lib/db/pool";
 import type { ImportedTestCaseRow } from "@/lib/validation/import";
 
 export interface ImportCommitResult {
@@ -14,46 +13,37 @@ export async function commitTestCaseImport(
   fileName: string,
   importedByAdminId: string | null,
 ): Promise<ImportCommitResult> {
-  const supabase = createSupabaseAdminClient();
   let createdCount = 0;
   let updatedCount = 0;
-
-  for (const row of rows) {
-    const { data: existing } = await supabase
-      .from("test_cases")
-      .select("id")
-      .eq("test_case_id", row.testCaseId)
-      .maybeSingle();
-
-    const payload = {
-      test_case_id: row.testCaseId,
-      functional_area: row.functionalArea,
-      persona: row.persona || null,
-      scenario: row.scenario,
-      suggested_steps: row.suggestedSteps,
-      expected_result: row.expectedResult,
-      required_evidence: row.requiredEvidence,
-      source_row_number: row.sourceRowNumber,
-    };
-
-    if (existing) {
-      const { error } = await supabase.from("test_cases").update(payload).eq("id", existing.id);
-      if (error) throw new AppError("VALIDATION", `Failed to update ${row.testCaseId}.`);
-      updatedCount += 1;
-    } else {
-      const { error } = await supabase.from("test_cases").insert(payload);
-      if (error) throw new AppError("VALIDATION", `Failed to import ${row.testCaseId}.`);
-      createdCount += 1;
+  await withTransaction(async (client) => {
+    for (const row of rows) {
+      const { rows: result } = await client.query<{ inserted: boolean }>(
+        `insert into test_cases
+           (test_case_id, functional_area, persona, scenario, suggested_steps, expected_result, required_evidence, source_row_number)
+         values ($1, $2, $3, $4, $5, $6, $7, $8)
+         on conflict (test_case_id) do update set
+           functional_area = excluded.functional_area,
+           persona = excluded.persona,
+           scenario = excluded.scenario,
+           suggested_steps = excluded.suggested_steps,
+           expected_result = excluded.expected_result,
+           required_evidence = excluded.required_evidence,
+           source_row_number = excluded.source_row_number,
+           updated_at = now()
+         returning (xmax = 0) as inserted`,
+        [row.testCaseId, row.functionalArea, row.persona || null, row.scenario, row.suggestedSteps,
+          row.expectedResult, row.requiredEvidence, row.sourceRowNumber],
+      );
+      if (result[0]?.inserted) createdCount += 1;
+      else updatedCount += 1;
     }
-  }
 
-  await supabase.from("import_batches").insert({
-    file_name: fileName,
-    imported_by: importedByAdminId,
-    row_count: rows.length,
-    created_count: createdCount,
-    updated_count: updatedCount,
-    error_count: 0,
+    await client.query(
+      `insert into import_batches
+         (file_name, imported_by, row_count, created_count, updated_count, error_count)
+       values ($1, $2, $3, $4, $5, 0)`,
+      [fileName, importedByAdminId, rows.length, createdCount, updatedCount],
+    );
   });
 
   return { createdCount, updatedCount };

@@ -1,4 +1,8 @@
-# Windows Server deployment runbook
+# Historical: Windows app with self-hosted Supabase in Linux VM
+
+> This Supabase-in-Hyper-V design is no longer the target. The app now uses native Windows
+> PostgreSQL and local evidence storage. Follow
+> [windows-postgresql-migration.md](windows-postgresql-migration.md) for the current runbook.
 
 This project is a Next.js Node.js application backed by Supabase PostgreSQL, Supabase Auth, and Supabase Storage. The target here is one Windows Server 2022 host, with the app running on Windows and Supabase running in a Linux VM under Hyper-V. Hosting only the Next.js process on Windows does not move the database or uploaded evidence on-premises.
 

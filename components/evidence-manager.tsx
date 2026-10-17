@@ -13,14 +13,11 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { createSupabaseBrowserClient } from "@/lib/supabase/browserClient";
 import {
-  createEvidenceUploadUrlAction,
-  registerEvidenceFileAction,
+  uploadEvidenceFileAction,
   registerEvidenceUrlAction,
   getSignedEvidenceUrlAction,
 } from "@/app/actions/evidence";
-import { EVIDENCE_BUCKET } from "@/lib/constants";
 import type { Database } from "@/lib/types/database";
 
 type EvidenceRow = Database["public"]["Tables"]["evidence"]["Row"];
@@ -42,24 +39,12 @@ export function EvidenceManager({
     if (!file) return;
     setIsUploading(true);
     try {
-      const urlRes = await createEvidenceUploadUrlAction(testResultId, file.name);
-      if (!urlRes.ok) throw new Error(urlRes.error);
+      const formData = new FormData();
+      formData.set("file", file);
+      const uploadRes = await uploadEvidenceFileAction(testResultId, formData);
+      if (!uploadRes.ok) throw new Error(uploadRes.error);
 
-      const supabase = createSupabaseBrowserClient();
-      const { error: uploadError } = await supabase.storage
-        .from(EVIDENCE_BUCKET)
-        .uploadToSignedUrl(urlRes.data.path, urlRes.data.token, file);
-      if (uploadError) throw uploadError;
-
-      const registerRes = await registerEvidenceFileAction(testResultId, {
-        path: urlRes.data.path,
-        fileName: file.name,
-        mimeType: file.type || "application/octet-stream",
-        sizeBytes: file.size,
-      });
-      if (!registerRes.ok) throw new Error(registerRes.error);
-
-      onAdded(registerRes.data);
+      onAdded(uploadRes.data);
       toast.success("Evidence uploaded.");
       setOpen(false);
     } catch (error) {
@@ -100,7 +85,7 @@ export function EvidenceManager({
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => (e.kind === "url" && e.url ? window.open(e.url, "_blank") : handleView(e.id))}
+            onClick={() => (e.kind === "url" && e.url ? window.open(e.url, "_blank", "noopener,noreferrer") : handleView(e.id))}
           >
             {e.kind === "url" ? <LinkIcon /> : <FileText />}
             {e.file_name ?? e.url}
@@ -122,6 +107,7 @@ export function EvidenceManager({
               <label className="text-sm font-medium">Upload a file</label>
               <Input
                 type="file"
+                accept=".pdf,.png,.jpg,.jpeg,.txt,.csv,.xls,.xlsx,.doc,.docx"
                 disabled={isUploading}
                 onChange={(e) => handleFileChange(e.target.files?.[0])}
               />

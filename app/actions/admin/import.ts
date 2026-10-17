@@ -1,7 +1,6 @@
 "use server";
 
 import { requireAdminSession } from "@/lib/auth/adminSession";
-import { createSupabaseAdminClient } from "@/lib/supabase/adminClient";
 import { parseTestCaseWorkbook } from "@/lib/import/parseWorkbook";
 import { commitTestCaseImport } from "@/lib/data/importTestCases";
 import { AppError, runAction } from "@/lib/actionResult";
@@ -34,14 +33,7 @@ export async function commitImportAction(formData: FormData) {
       throw new AppError("VALIDATION", "Resolve row errors and duplicate IDs before importing.");
     }
 
-    const supabase = createSupabaseAdminClient();
-    const { data: adminRow } = await supabase
-      .from("admin_users")
-      .select("id")
-      .eq("auth_user_id", admin.authUserId)
-      .maybeSingle();
-
-    const result = await commitTestCaseImport(preview.validRows, file.name, adminRow?.id ?? null);
+    const result = await commitTestCaseImport(preview.validRows, file.name, admin.id);
     revalidatePath("/admin/import");
     revalidatePath("/admin/assignments");
     return result;

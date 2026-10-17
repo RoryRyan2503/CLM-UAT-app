@@ -1,121 +1,100 @@
 import "server-only";
-import { createSupabaseAdminClient } from "@/lib/supabase/adminClient";
+import { query, withTransaction } from "@/lib/db/pool";
 import { AppError } from "@/lib/actionResult";
 import { generateAccessCode, hashAccessCodeForLookup, hashAccessCodeForStorage } from "@/lib/auth/accessCodes";
 import type { CreateTesterInput } from "@/lib/validation/tester";
+import type { Database } from "@/lib/types/database";
+
+type TesterRow = Database["public"]["Tables"]["testers"]["Row"];
 
 export async function listTesters() {
-  const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase.from("testers").select("*").order("created_at", { ascending: false });
-  if (error) throw new AppError("NOT_FOUND", "Unable to load testers.");
-  return data ?? [];
+  const { rows } = await query<TesterRow>("select * from testers order by created_at desc");
+  return rows;
 }
 
 export async function listPersonas() {
-  const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase.from("personas").select("id, name").order("name");
-  if (error) throw new AppError("NOT_FOUND", "Unable to load personas.");
-  return data ?? [];
+  const { rows } = await query<{ id: string; name: string }>("select id, name from personas order by name");
+  return rows;
 }
 
 /** Returns the plaintext code once; only the hash is persisted. */
 export async function createTester(input: CreateTesterInput): Promise<{ tester: unknown; accessCode: string }> {
-  const supabase = createSupabaseAdminClient();
   const accessCode = generateAccessCode();
-  const { data: persona, error: personaError } = await supabase
-    .from("personas")
-    .select("id, name")
-    .eq("id", input.personaId)
-    .maybeSingle();
-  if (personaError || !persona) throw new AppError("VALIDATION", "Select a valid persona before creating the tester.");
-
-  const { data, error } = await supabase
-    .from("testers")
-    .insert({
-      name: input.name,
-      email: input.email || null,
-      department: input.department || null,
-      persona: persona.name,
-      persona_id: persona.id,
-      access_code_hash: hashAccessCodeForStorage(accessCode),
-      access_code_lookup: hashAccessCodeForLookup(accessCode),
-    })
-    .select("*")
-    .maybeSingle();
-
-  if (error || !data) throw new AppError("VALIDATION", "Unable to create tester. The name or code may already be in use.");
-  return { tester: data, accessCode };
+  try {
+    return await withTransaction(async (client) => {
+      const { rows: personas } = await client.query<{ id: string; name: string }>(
+        "select id, name from personas where id = $1",
+        [input.personaId],
+      );
+      const persona = personas[0];
+      if (!persona) throw new AppError("VALIDATION", "Select a valid persona before creating the tester.");
+      const { rows } = await client.query(
+        `insert into testers
+           (name, email, department, persona, persona_id, access_code_hash, access_code_lookup)
+         values ($1, $2, $3, $4, $5, $6, $7) returning *`,
+        [input.name, input.email || null, input.department || null, persona.name, persona.id,
+          hashAccessCodeForStorage(accessCode), hashAccessCodeForLookup(accessCode)],
+      );
+      return { tester: rows[0], accessCode };
+    });
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw new AppError("VALIDATION", "Unable to create tester. The name or code may already be in use.");
+  }
 }
 
 export async function updateTester(testerId: string, input: Partial<CreateTesterInput>) {
-  const supabase = createSupabaseAdminClient();
-  let personaUpdate: { persona?: string; persona_id?: string } = {};
+  const values: unknown[] = [];
+  const assignments: string[] = [];
+  const add = (column: string, value: unknown) => {
+    values.push(value);
+    assignments.push(`${column} = $${values.length}`);
+  };
+  if (input.name !== undefined) add("name", input.name);
+  if (input.email !== undefined) add("email", input.email || null);
+  if (input.department !== undefined) add("department", input.department || null);
   if (input.personaId !== undefined) {
-    const { data: persona, error: personaError } = await supabase
-      .from("personas")
-      .select("id, name")
-      .eq("id", input.personaId)
-      .maybeSingle();
-    if (personaError || !persona) throw new AppError("VALIDATION", "Select a valid persona.");
-    personaUpdate = { persona: persona.name, persona_id: persona.id };
+    const { rows: personas } = await query<{ id: string; name: string }>(
+      "select id, name from personas where id = $1",
+      [input.personaId],
+    );
+    if (!personas[0]) throw new AppError("VALIDATION", "Select a valid persona.");
+    add("persona", personas[0].name);
+    add("persona_id", personas[0].id);
   }
-  const { data, error } = await supabase
-    .from("testers")
-    .update({
-      ...(input.name !== undefined ? { name: input.name } : {}),
-      ...(input.email !== undefined ? { email: input.email || null } : {}),
-      ...(input.department !== undefined ? { department: input.department || null } : {}),
-      ...personaUpdate,
-    })
-    .eq("id", testerId)
-    .select("*")
-    .maybeSingle();
-  if (error || !data) throw new AppError("VALIDATION", "Unable to update tester.");
-  return data;
+  if (assignments.length === 0) throw new AppError("VALIDATION", "No tester changes were provided.");
+  values.push(testerId);
+  const { rows } = await query(
+    `update testers set ${assignments.join(", ")} where id = $${values.length} returning *`,
+    values,
+  );
+  if (!rows[0]) throw new AppError("VALIDATION", "Unable to update tester.");
+  return rows[0];
 }
 
 export async function setTesterActive(testerId: string, isActive: boolean) {
-  const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from("testers")
-    .update({ is_active: isActive })
-    .eq("id", testerId)
-    .select("*")
-    .maybeSingle();
-  if (error || !data) throw new AppError("VALIDATION", "Unable to update tester status.");
-  return data;
+  const { rows } = await query("update testers set is_active = $1 where id = $2 returning *", [isActive, testerId]);
+  if (!rows[0]) throw new AppError("VALIDATION", "Unable to update tester status.");
+  return rows[0];
 }
 
 export async function deleteTester(testerId: string): Promise<void> {
-  const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from("testers")
-    .delete()
-    .eq("id", testerId)
-    .select("id")
-    .maybeSingle();
-
-  if (error || !data) throw new AppError("VALIDATION", "Unable to delete tester.");
+  const { rowCount } = await query("delete from testers where id = $1", [testerId]);
+  if (!rowCount) throw new AppError("VALIDATION", "Unable to delete tester.");
 }
 
 export async function resetAccessCode(testerId: string): Promise<string> {
-  const supabase = createSupabaseAdminClient();
   const accessCode = generateAccessCode();
-  const { error } = await supabase
-    .from("testers")
-    .update({
-      access_code_hash: hashAccessCodeForStorage(accessCode),
-      access_code_lookup: hashAccessCodeForLookup(accessCode),
-    })
-    .eq("id", testerId);
-  if (error) throw new AppError("VALIDATION", "Unable to reset access code.");
-
-  // Revoke existing sessions so the old code's session can't continue to be used.
-  await supabase
-    .from("tester_sessions")
-    .update({ revoked_at: new Date().toISOString() })
-    .eq("tester_id", testerId)
-    .is("revoked_at", null);
-
+  await withTransaction(async (client) => {
+    const { rowCount } = await client.query(
+      "update testers set access_code_hash = $1, access_code_lookup = $2 where id = $3",
+      [hashAccessCodeForStorage(accessCode), hashAccessCodeForLookup(accessCode), testerId],
+    );
+    if (!rowCount) throw new AppError("VALIDATION", "Unable to reset access code.");
+    await client.query(
+      "update tester_sessions set revoked_at = now() where tester_id = $1 and revoked_at is null",
+      [testerId],
+    );
+  });
   return accessCode;
 }

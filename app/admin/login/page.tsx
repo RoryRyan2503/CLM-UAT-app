@@ -17,7 +17,7 @@ export default async function AdminLoginPage() {
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>Admin sign-in</CardTitle>
-          <CardDescription>Sign in with your Supabase Auth email and password.</CardDescription>
+          <CardDescription>Sign in with your administrator email and password.</CardDescription>
         </CardHeader>
         <CardContent>
           <AdminLoginForm />

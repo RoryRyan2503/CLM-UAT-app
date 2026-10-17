@@ -1,8 +1,7 @@
 import "server-only";
-import { createSupabaseAdminClient } from "@/lib/supabase/adminClient";
+import { query } from "@/lib/db/pool";
 import { AppError } from "@/lib/actionResult";
 import { COMPLETED_STATUSES, PASSING_STATUSES } from "@/lib/constants";
-import { embeddedOne } from "@/lib/supabase/embedded";
 
 export interface DashboardSummary {
   ironcladCompleted: number;
@@ -18,57 +17,41 @@ export interface DashboardSummary {
 }
 
 export async function getDashboardSummary(testerId: string): Promise<DashboardSummary> {
-  const supabase = createSupabaseAdminClient();
-
-  const { data, error } = await supabase
-    .from("assignments")
-    .select("vendor_id, vendors(slug), test_results(status)")
-    .eq("tester_id", testerId)
-    .eq("is_active", true);
-
-  if (error) throw new AppError("NOT_FOUND", "Unable to load dashboard.");
-
-  type Row = {
-    vendor_id: string;
-    vendors: { slug: string } | null;
-    test_results: { status: string } | { status: string }[] | null;
-  };
-  const rows = (data ?? []) as unknown as Row[];
-
-  const summary: DashboardSummary = {
-    ironcladCompleted: 0,
-    ironcladTotal: 0,
-    sirionCompleted: 0,
-    sirionTotal: 0,
-    overallCompleted: 0,
-    overallTotal: 0,
-    passed: 0,
-    failed: 0,
-    blocked: 0,
-    incomplete: 0,
-  };
-
-  for (const row of rows) {
-    const status = embeddedOne(row.test_results)?.status ?? "Not Started";
-    const completed = COMPLETED_STATUSES.includes(status as (typeof COMPLETED_STATUSES)[number]);
-    const slug = row.vendors?.slug;
-
-    summary.overallTotal += 1;
-    if (completed) summary.overallCompleted += 1;
-
-    if (slug === "ironclad") {
-      summary.ironcladTotal += 1;
-      if (completed) summary.ironcladCompleted += 1;
-    } else if (slug === "sirion") {
-      summary.sirionTotal += 1;
-      if (completed) summary.sirionCompleted += 1;
-    }
-
-    if (PASSING_STATUSES.includes(status as (typeof PASSING_STATUSES)[number])) summary.passed += 1;
-    else if (status === "Fail") summary.failed += 1;
-    else if (status === "Blocked") summary.blocked += 1;
-    else if (!completed) summary.incomplete += 1;
+  const completedValues = COMPLETED_STATUSES.map((_, index) => `$${index + 2}`).join(", ");
+  const passingValues = PASSING_STATUSES.map((_, index) => `$${index + COMPLETED_STATUSES.length + 2}`).join(", ");
+  const values = [testerId, ...COMPLETED_STATUSES, ...PASSING_STATUSES];
+  try {
+    const { rows } = await query<Record<keyof DashboardSummary, string>>(
+      `select
+         count(*) filter (where v.slug = 'ironclad' and coalesce(tr.status, 'Not Started') in (${completedValues})) as "ironcladCompleted",
+         count(*) filter (where v.slug = 'ironclad') as "ironcladTotal",
+         count(*) filter (where v.slug = 'sirion' and coalesce(tr.status, 'Not Started') in (${completedValues})) as "sirionCompleted",
+         count(*) filter (where v.slug = 'sirion') as "sirionTotal",
+         count(*) filter (where coalesce(tr.status, 'Not Started') in (${completedValues})) as "overallCompleted",
+         count(*) as "overallTotal",
+         count(*) filter (where tr.status in (${passingValues})) as passed,
+         count(*) filter (where tr.status = 'Fail') as failed,
+         count(*) filter (where tr.status = 'Blocked') as blocked,
+         count(*) filter (where coalesce(tr.status, 'Not Started') not in (${completedValues})) as incomplete
+       from assignments a join vendors v on v.id = a.vendor_id
+       left join test_results tr on tr.assignment_id = a.id
+       where a.tester_id = $1 and a.is_active = true`,
+      values,
+    );
+    const result = rows[0];
+    return {
+      ironcladCompleted: Number(result.ironcladCompleted),
+      ironcladTotal: Number(result.ironcladTotal),
+      sirionCompleted: Number(result.sirionCompleted),
+      sirionTotal: Number(result.sirionTotal),
+      overallCompleted: Number(result.overallCompleted),
+      overallTotal: Number(result.overallTotal),
+      passed: Number(result.passed),
+      failed: Number(result.failed),
+      blocked: Number(result.blocked),
+      incomplete: Number(result.incomplete),
+    };
+  } catch {
+    throw new AppError("NOT_FOUND", "Unable to load dashboard.");
   }
-
-  return summary;
 }

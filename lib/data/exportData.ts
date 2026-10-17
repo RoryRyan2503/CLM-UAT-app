@@ -1,49 +1,24 @@
 import "server-only";
-import { createSupabaseAdminClient } from "@/lib/supabase/adminClient";
-import { AppError } from "@/lib/actionResult";
+import { query } from "@/lib/db/pool";
 import type { ExportRecord } from "@/lib/export/buildWorkbook";
-import { embeddedOne } from "@/lib/supabase/embedded";
 
 export async function getExportRecords(vendorSlug?: "ironclad" | "sirion"): Promise<ExportRecord[]> {
-  const supabase = createSupabaseAdminClient();
-
-  let query = supabase
-    .from("assignments")
-    .select("*, testers(*), vendors(*), test_cases(*), test_results(*)")
-    .order("test_case_id", { ascending: true });
-
-  if (vendorSlug) {
-    const { data: vendor } = await supabase.from("vendors").select("id").eq("slug", vendorSlug).maybeSingle();
-    if (!vendor) throw new AppError("NOT_FOUND", "Unknown vendor.");
-    query = query.eq("vendor_id", vendor.id);
-  }
-
-  const { data, error } = await query;
-  if (error) throw new AppError("NOT_FOUND", "Unable to load export data.");
-
-  type Row = {
-    testers: ExportRecord["tester"];
-    vendors: ExportRecord["vendor"];
-    test_cases: ExportRecord["testCase"];
-    test_results: ExportRecord["result"] | ExportRecord["result"][] | null;
-  } & ExportRecord["assignment"];
-
-  const records: ExportRecord[] = [];
-  for (const row of (data ?? []) as unknown as Row[]) {
-    const result = embeddedOne(row.test_results);
-    let defect = null;
-    if (result?.defect_id) {
-      const { data: defectRow } = await supabase.from("defects").select("*").eq("id", result.defect_id).maybeSingle();
-      defect = defectRow ?? null;
-    }
-    records.push({
-      testCase: row.test_cases,
-      tester: row.testers,
-      vendor: row.vendors,
-      result,
-      defect,
-      assignment: row as unknown as ExportRecord["assignment"],
-    });
-  }
-  return records;
+  type Joined = ExportRecord;
+  const values = vendorSlug ? [vendorSlug] : [];
+  const where = vendorSlug ? "where v.slug = $1" : "";
+  const { rows } = await query<Joined>(
+    `select to_jsonb(tc) as "testCase", to_jsonb(a) as assignment,
+       to_jsonb(t) as tester, to_jsonb(v) as vendor, to_jsonb(tr) as result,
+       to_jsonb(d) as defect
+     from assignments a
+     join testers t on t.id = a.tester_id
+     join vendors v on v.id = a.vendor_id
+     join test_cases tc on tc.id = a.test_case_id
+     left join test_results tr on tr.assignment_id = a.id
+     left join defects d on d.id = tr.defect_id
+     ${where}
+     order by tc.test_case_id`,
+    values,
+  );
+  return rows;
 }

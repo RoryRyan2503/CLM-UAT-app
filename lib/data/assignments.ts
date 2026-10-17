@@ -1,7 +1,6 @@
 import "server-only";
-import { createSupabaseAdminClient } from "@/lib/supabase/adminClient";
+import { query } from "@/lib/db/pool";
 import { AppError } from "@/lib/actionResult";
-import { embeddedOne } from "@/lib/supabase/embedded";
 
 export interface AssignmentListItem {
   testCaseId: string;
@@ -15,64 +14,43 @@ export interface AssignmentListItem {
 }
 
 export async function listAssignmentsForTester(testerId: string): Promise<AssignmentListItem[]> {
-  const supabase = createSupabaseAdminClient();
-
-  const { data: assignments, error: assignmentError } = await supabase
-    .from("assignments")
-    .select("test_case_id, vendors(slug), test_results(status)")
-    .eq("tester_id", testerId)
-    .eq("is_active", true);
-  if (assignmentError) throw new AppError("NOT_FOUND", "Unable to load assignments.");
-
-  type AssignmentRow = {
-    test_case_id: string;
-    vendors: { slug: string } | null;
-    test_results: { status: string } | { status: string }[] | null;
-  };
-  const assignmentRows = (assignments ?? []) as unknown as AssignmentRow[];
-  const assignedTestCaseIds = [...new Set(assignmentRows.map((assignment) => assignment.test_case_id))];
-  if (assignedTestCaseIds.length === 0) return [];
-
-  const { data: testCases, error: testCaseError } = await supabase
-    .from("test_cases")
-    .select("id, test_case_id, functional_area, scenario")
-    .in("id", assignedTestCaseIds)
-    .order("test_case_id", { ascending: true });
-  if (testCaseError) throw new AppError("NOT_FOUND", "Unable to load assigned test cases.");
-
-  const { data: comparisons, error: comparisonError } = await supabase
-    .from("comparisons")
-    .select("test_case_id, preferred_vendor")
-    .eq("tester_id", testerId)
-    .not("preferred_vendor", "is", null);
-  if (comparisonError) throw new AppError("NOT_FOUND", "Unable to load comparisons.");
-
-  const statusByTestCase = new Map<string, { ironclad: string; sirion: string }>();
-  for (const row of assignmentRows) {
-    const entry = statusByTestCase.get(row.test_case_id) ?? { ironclad: "Not Started", sirion: "Not Started" };
-    const status = embeddedOne(row.test_results)?.status ?? "Not Started";
-    if (row.vendors?.slug === "ironclad") entry.ironclad = status;
-    if (row.vendors?.slug === "sirion") entry.sirion = status;
-    statusByTestCase.set(row.test_case_id, entry);
+  try {
+    const { rows } = await query<{
+      test_case_id: string;
+      test_case_uuid: string;
+      functional_area: string;
+      scenario: string;
+      ironclad_status: string;
+      sirion_status: string;
+      comparison_complete: boolean;
+      preferred_vendor: string | null;
+    }>(
+      `select tc.test_case_id, tc.id as test_case_uuid, tc.functional_area, tc.scenario,
+         coalesce(max(tr.status) filter (where v.slug = 'ironclad'), 'Not Started') as ironclad_status,
+         coalesce(max(tr.status) filter (where v.slug = 'sirion'), 'Not Started') as sirion_status,
+         (c.test_case_id is not null) as comparison_complete, c.preferred_vendor
+       from assignments a
+       join test_cases tc on tc.id = a.test_case_id
+       join vendors v on v.id = a.vendor_id
+       left join test_results tr on tr.assignment_id = a.id
+       left join comparisons c on c.tester_id = a.tester_id and c.test_case_id = a.test_case_id
+         and c.preferred_vendor is not null
+       where a.tester_id = $1 and a.is_active = true
+       group by tc.id, c.test_case_id, c.preferred_vendor
+       order by tc.test_case_id`,
+      [testerId],
+    );
+    return rows.map((row) => ({
+      testCaseId: row.test_case_id,
+      testCaseUuid: row.test_case_uuid,
+      functionalArea: row.functional_area,
+      scenario: row.scenario,
+      ironcladStatus: row.ironclad_status,
+      sirionStatus: row.sirion_status,
+      comparisonComplete: row.comparison_complete,
+      preferredVendor: row.preferred_vendor,
+    }));
+  } catch {
+    throw new AppError("NOT_FOUND", "Unable to load assignments.");
   }
-
-  const preferredVendorByTestCase = new Map(
-    (comparisons ?? []).map((comparison) => [comparison.test_case_id, comparison.preferred_vendor]),
-  );
-
-  const comparedTestCaseIds = new Set((comparisons ?? []).map((c) => c.test_case_id));
-
-  return (testCases ?? []).map((testCase) => {
-    const statuses = statusByTestCase.get(testCase.id) ?? { ironclad: "Not Started", sirion: "Not Started" };
-    return {
-      testCaseId: testCase.test_case_id,
-      testCaseUuid: testCase.id,
-      functionalArea: testCase.functional_area,
-      scenario: testCase.scenario,
-      ironcladStatus: statuses.ironclad,
-      sirionStatus: statuses.sirion,
-      comparisonComplete: comparedTestCaseIds.has(testCase.id),
-      preferredVendor: preferredVendorByTestCase.get(testCase.id) ?? null,
-    };
-  });
 }

@@ -1,4 +1,8 @@
-# Phase 1: host the app on Windows Server, keep Supabase hosted
+# Historical: host the app on Windows Server, keep Supabase hosted
+
+> Superseded architecture: the application runtime now uses native PostgreSQL, local admin
+> authentication, and private filesystem evidence storage. Follow
+> [windows-postgresql-migration.md](windows-postgresql-migration.md) for the current deployment.
 
 This is the simplest transition for the current app. The Next.js application runs on Windows Server 2022, but PostgreSQL, Supabase Auth, and evidence Storage remain in the existing hosted Supabase project. This does **not** move UAT data or evidence on-premises. Confirm data residency/security approval before proceeding.
 

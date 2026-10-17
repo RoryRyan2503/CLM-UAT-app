@@ -1,41 +1,28 @@
 import "server-only";
-import { createSupabaseAdminClient } from "@/lib/supabase/adminClient";
+import { withTransaction } from "@/lib/db/pool";
+import type { PoolClient } from "pg";
 import { AppError } from "@/lib/actionResult";
-import { embeddedOne } from "@/lib/supabase/embedded";
 import {
   getConditionalRequirementErrors,
   type TestResultDraftInput,
 } from "@/lib/validation/testResult";
 
-async function loadOwnedAssignment(testerId: string, assignmentId: string) {
-  const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from("assignments")
-    .select("id, tester_id, is_active, test_results(*)")
-    .eq("id", assignmentId)
-    .maybeSingle();
-
-  type Row = {
-    id: string;
-    tester_id: string;
-    is_active: boolean;
-    test_results:
-      | { id: string; version: number; started_at: string | null }
-      | { id: string; version: number; started_at: string | null }[]
-      | null;
-  };
-  const assignment = data as unknown as Row | null;
-
-  if (error || !assignment) throw new AppError("NOT_FOUND", "Assignment not found.");
-  if (assignment.tester_id !== testerId) {
-    throw new AppError("FORBIDDEN", "You may only edit your own assigned records.");
-  }
-  if (!assignment.is_active) {
+async function loadOwnedAssignment(client: PoolClient, testerId: string, assignmentId: string) {
+  const { rows } = await client.query(
+    `select tr.*, a.tester_id, a.is_active
+     from assignments a join test_results tr on tr.assignment_id = a.id
+     where a.id = $1 for update of tr`,
+    [assignmentId],
+  );
+  const row = rows[0] as (Record<string, unknown> & {
+    tester_id: string; is_active: boolean; id: string; version: number; started_at: string | null;
+  }) | undefined;
+  if (!row) throw new AppError("NOT_FOUND", "Assignment not found.");
+  if (row.tester_id !== testerId) throw new AppError("FORBIDDEN", "You may only edit your own assigned records.");
+  if (!row.is_active) {
     throw new AppError("FORBIDDEN", "This test case is no longer assigned to your active workspace.");
   }
-  const result = embeddedOne(assignment.test_results);
-  if (!result) throw new AppError("NOT_FOUND", "Result record not found for this assignment.");
-  return { supabase, result };
+  return row;
 }
 
 function toRowPatch(input: TestResultDraftInput, testerId: string) {
@@ -61,22 +48,23 @@ function toRowPatch(input: TestResultDraftInput, testerId: string) {
 }
 
 async function applyUpdate(
-  supabase: ReturnType<typeof createSupabaseAdminClient>,
+  client: PoolClient,
   result: { id: string; version: number },
   patch: Record<string, unknown>,
   testerId: string,
   changeType: string,
 ) {
   const nextVersion = result.version + 1;
-  const { data: updated, error } = await supabase
-    .from("test_results")
-    .update({ ...patch, version: nextVersion })
-    .eq("id", result.id)
-    .eq("version", result.version)
-    .select("*")
-    .maybeSingle();
-
-  if (error) throw new AppError("VALIDATION", "Unable to save result.");
+  const columns = Object.keys(patch);
+  const values = Object.values(patch);
+  const assignments = columns.map((column, index) => `${column} = $${index + 1}`);
+  values.push(nextVersion, result.id, result.version);
+  const { rows: updatedRows } = await client.query(
+    `update test_results set ${assignments.join(", ")}, version = $${values.length - 2}, updated_at = now()
+     where id = $${values.length - 1} and version = $${values.length} returning *`,
+    values,
+  );
+  const updated = updatedRows[0];
   if (!updated) {
     throw new AppError(
       "CONFLICT",
@@ -84,31 +72,26 @@ async function applyUpdate(
     );
   }
 
-  await supabase.from("result_history").insert({
-    test_result_id: result.id,
-    changed_by_tester_id: testerId,
-    changed_by_admin: false,
-    change_type: changeType,
-    previous_values: result,
-    new_values: updated,
-    version: nextVersion,
-  });
+  await client.query(
+    `insert into result_history
+       (test_result_id, changed_by_tester_id, changed_by_admin, change_type, previous_values, new_values, version)
+     values ($1, $2, false, $3, $4::jsonb, $5::jsonb, $6)`,
+    [result.id, testerId, changeType, JSON.stringify(result), JSON.stringify(updated), nextVersion],
+  );
 
   return updated;
 }
 
 /** Autosave: no conditional-completion validation, just persists whatever the user has typed. */
 export async function saveTestResultDraft(testerId: string, input: TestResultDraftInput) {
-  const { supabase, result } = await loadOwnedAssignment(testerId, input.assignmentId);
-  if (input.version !== result.version) {
-    throw new AppError("CONFLICT", "This record was updated elsewhere. Reload to see the latest version.");
-  }
-
-  const patch = {
-    ...toRowPatch(input, testerId),
-    started_at: result.started_at ?? new Date().toISOString(),
-  };
-  return applyUpdate(supabase, result, patch, testerId, "draft_save");
+  return withTransaction(async (client) => {
+    const result = await loadOwnedAssignment(client, testerId, input.assignmentId);
+    if (input.version !== result.version) {
+      throw new AppError("CONFLICT", "This record was updated elsewhere. Reload to see the latest version.");
+    }
+    const patch = { ...toRowPatch(input, testerId), started_at: result.started_at ?? new Date() };
+    return applyUpdate(client, result, patch, testerId, "draft_save");
+  });
 }
 
 /** Full submission: enforces conditional completion rules server-side before persisting. */
@@ -118,15 +101,17 @@ export async function submitTestResult(testerId: string, input: TestResultDraftI
     throw new AppError("VALIDATION", "Please resolve the highlighted fields.", fieldErrors);
   }
 
-  const { supabase, result } = await loadOwnedAssignment(testerId, input.assignmentId);
-  if (input.version !== result.version) {
-    throw new AppError("CONFLICT", "This record was updated elsewhere. Reload to see the latest version.");
-  }
-
-  const patch = {
-    ...toRowPatch(input, testerId),
-    started_at: result.started_at ?? new Date().toISOString(),
-    completed_at: new Date().toISOString(),
-  };
-  return applyUpdate(supabase, result, patch, testerId, "submit");
+  return withTransaction(async (client) => {
+    const result = await loadOwnedAssignment(client, testerId, input.assignmentId);
+    if (input.version !== result.version) {
+      throw new AppError("CONFLICT", "This record was updated elsewhere. Reload to see the latest version.");
+    }
+    const now = new Date();
+    const patch = {
+      ...toRowPatch(input, testerId),
+      started_at: result.started_at ?? now,
+      completed_at: now,
+    };
+    return applyUpdate(client, result, patch, testerId, "submit");
+  });
 }

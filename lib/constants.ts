@@ -45,6 +45,8 @@ export type DefectStatusValue = (typeof DEFECT_STATUS_VALUES)[number];
 
 export const TESTER_SESSION_COOKIE = "clm_tester_session";
 export const TESTER_SESSION_TTL_DAYS = 30;
+export const ADMIN_SESSION_COOKIE = "clm_admin_session";
+export const APP_BASE_PATH = "/clm-uat";
 
 export const EVIDENCE_BUCKET = "evidence";
 
