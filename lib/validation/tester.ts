@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const testerLoginSchema = z.object({
-  name: z.string().trim().min(1, "Name is required.").max(200),
+  identifier: z.string().trim().min(1, "Name or email is required.").max(320),
   accessCode: z
     .string()
     .trim()

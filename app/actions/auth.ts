@@ -12,32 +12,36 @@ import { AppError, runAction } from "@/lib/actionResult";
 export async function testerLoginAction(formData: FormData) {
   return runAction(async () => {
     const parsed = testerLoginSchema.safeParse({
-      name: formData.get("name"),
+      identifier: formData.get("identifier"),
       accessCode: formData.get("accessCode"),
     });
     if (!parsed.success) {
-      throw new AppError("VALIDATION", "Please enter your name and access code.");
+      throw new AppError("VALIDATION", "Please enter your name or email and access code.");
     }
-    const { name, accessCode } = parsed.data;
-    const identifier = name.trim().toLowerCase();
+    const { identifier: suppliedIdentifier, accessCode } = parsed.data;
+    const identifier = suppliedIdentifier.trim().toLowerCase();
 
     if (await isRateLimited(identifier)) {
       throw new AppError("FORBIDDEN", "Too many attempts. Please try again later.");
     }
 
     const lookup = hashAccessCodeForLookup(accessCode);
-    const { rows } = await query<{ id: string; name: string; access_code_hash: string; is_active: boolean }>(
-      "select id, name, access_code_hash, is_active from testers where access_code_lookup = $1 limit 1",
+    const { rows } = await query<{ id: string; name: string; email: string | null; access_code_hash: string; is_active: boolean }>(
+      `select id, name, email, access_code_hash, is_active from testers
+       where access_code_lookup = $1 limit 1`,
       [lookup],
     );
     const tester = rows[0];
 
-    const matchesName = tester && tester.name.trim().toLowerCase() === identifier;
+    const matchesIdentifier = tester && (
+      tester.name.trim().toLowerCase() === identifier ||
+      tester.email?.trim().toLowerCase() === identifier
+    );
     const codeValid = tester ? verifyAccessCode(accessCode, tester.access_code_hash) : false;
 
-    if (!tester || !matchesName || !codeValid || !tester.is_active) {
+    if (!tester || !matchesIdentifier || !codeValid || !tester.is_active) {
       await recordLoginAttempt(identifier, false);
-      throw new AppError("UNAUTHENTICATED", "Name or access code is incorrect.");
+      throw new AppError("UNAUTHENTICATED", "Name/email or access code is incorrect.");
     }
 
     await recordLoginAttempt(identifier, true);

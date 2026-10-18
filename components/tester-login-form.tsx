@@ -30,8 +30,8 @@ export function TesterLoginForm() {
   return (
     <form action={handleSubmit} className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="name">Full name</Label>
-        <Input id="name" name="name" required autoComplete="name" placeholder="Jane Doe" />
+        <Label htmlFor="identifier">Name or email</Label>
+        <Input id="identifier" name="identifier" required autoComplete="username" placeholder="Jane Doe or jane@example.com" />
       </div>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="accessCode">Access code</Label>

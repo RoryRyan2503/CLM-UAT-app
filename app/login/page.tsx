@@ -18,7 +18,7 @@ export default async function LoginPage() {
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>Tester sign-in</CardTitle>
-          <CardDescription>Enter your name and the access code your admin provided.</CardDescription>
+          <CardDescription>Enter your name or email and the access code your admin provided.</CardDescription>
         </CardHeader>
         <CardContent>
           <TesterLoginForm />
