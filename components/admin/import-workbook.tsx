@@ -13,6 +13,7 @@ import type { ImportPreview } from "@/lib/validation/import";
 
 export function ImportWorkbook() {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<(ImportPreview & { fileName: string }) | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -28,9 +29,12 @@ export function ImportWorkbook() {
   }
 
   function handleCommit() {
-    if (!fileInputRef.current?.files?.[0]) return;
+    if (!selectedFile) {
+      toast.error("Choose the workbook again, then preview it before committing.");
+      return;
+    }
     const formData = new FormData();
-    formData.set("file", fileInputRef.current.files[0]);
+    formData.set("file", selectedFile);
     startTransition(async () => {
       const res = await commitImportAction(formData);
       if (!res.ok) {
@@ -39,6 +43,8 @@ export function ImportWorkbook() {
       }
       toast.success(`Imported: ${res.data.createdCount} created, ${res.data.updatedCount} updated, ${res.data.archivedCount} archived.`);
       setPreview(null);
+      setSelectedFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     });
   }
 
@@ -54,7 +60,20 @@ export function ImportWorkbook() {
           <form action={handlePreview} className="flex items-center gap-3">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="test-case-workbook">Workbook or CSV<RequiredMark /></Label>
-              <input ref={fileInputRef} id="test-case-workbook" type="file" name="file" accept=".xlsx,.csv" required className="text-sm" />
+              <input
+                ref={fileInputRef}
+                id="test-case-workbook"
+                type="file"
+                name="file"
+                accept=".xlsx,.csv"
+                required
+                className="text-sm"
+                onChange={(event) => {
+                  setSelectedFile(event.currentTarget.files?.[0] ?? null);
+                  setPreview(null);
+                }}
+              />
+              {selectedFile ? <span className="text-xs text-foreground-muted">Selected: {selectedFile.name}</span> : null}
             </div>
             <Button type="submit" disabled={isPending}>
               Preview
