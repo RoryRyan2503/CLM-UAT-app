@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { toast } from "sonner";
+import { Eye } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -18,6 +19,7 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/componen
 import { CriticalBanner } from "@/components/critical-banner";
 import { EvidenceManager } from "@/components/evidence-manager";
 import { DefectDialog } from "@/components/defect-dialog";
+import { RequiredMark } from "@/components/ui/required-mark";
 import { useUnsavedChangesWarning } from "@/lib/hooks/useUnsavedChangesWarning";
 import { saveDraftAction, submitResultAction } from "@/app/actions/testResults";
 import {
@@ -29,6 +31,7 @@ import type { Database } from "@/lib/types/database";
 
 type TestResultRow = Database["public"]["Tables"]["test_results"]["Row"];
 type EvidenceRow = Database["public"]["Tables"]["evidence"]["Row"];
+type DefectRow = Database["public"]["Tables"]["defects"]["Row"];
 
 export function TestResultForm({
   vendorName,
@@ -36,6 +39,7 @@ export function TestResultForm({
   vendorId,
   result,
   evidence,
+  defect,
   evidenceEnabled,
   onSaved,
 }: {
@@ -44,6 +48,7 @@ export function TestResultForm({
   vendorId: string;
   result: TestResultRow;
   evidence: EvidenceRow[];
+  defect: DefectRow | null;
   evidenceEnabled: boolean;
   onSaved?: () => void;
 }) {
@@ -52,6 +57,8 @@ export function TestResultForm({
   const [form, setForm] = useState(rowToForm(result));
   const [version, setVersion] = useState(result.version);
   const [evidenceList, setEvidenceList] = useState(evidence);
+  const [linkedDefect, setLinkedDefect] = useState(defect);
+  const [showGradeDefinitions, setShowGradeDefinitions] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -67,11 +74,11 @@ export function TestResultForm({
     autosaveTimer.current = setTimeout(() => void handleSaveDraft({ ...form, [key]: value }), 1500);
   }
 
-  function buildInput(overrides?: Partial<typeof form>): TestResultDraftInput {
+  function buildInput(overrides?: Partial<typeof form>, versionOverride = version): TestResultDraftInput {
     const merged = { ...form, ...overrides };
     return {
       assignmentId,
-      version,
+      version: versionOverride,
       actualResult: merged.actualResult || null,
       featureAdequate: merged.featureAdequate,
       improvementNeeded: merged.improvementNeeded,
@@ -92,9 +99,9 @@ export function TestResultForm({
     };
   }
 
-  async function handleSaveDraft(overrideForm?: typeof form) {
+  async function handleSaveDraft(overrideForm?: typeof form, versionOverride = version) {
     setIsSaving(true);
-    const input = overrideForm ? buildInput(overrideForm) : buildInput();
+    const input = buildInput(overrideForm, versionOverride);
     const res = await saveDraftAction(input);
     setIsSaving(false);
     if (!res.ok) {
@@ -130,6 +137,8 @@ export function TestResultForm({
   }
 
   const isCritical = form.severity === "Critical" && form.status === "Fail";
+  const actualResultRequired = form.status === "Pass" || form.status === "Fail";
+  const isBlocked = form.status === "Blocked";
 
   return (
     <Card>
@@ -140,7 +149,7 @@ export function TestResultForm({
       <CardContent className="flex flex-col gap-5">
         {isCritical ? <CriticalBanner>Critical defect — flagged for immediate attention.</CriticalBanner> : null}
 
-        <Field label="Actual Result" error={errors.actualResult}>
+        <Field label="Actual Result" required={actualResultRequired} error={errors.actualResult}>
           <Textarea
             value={form.actualResult ?? ""}
             onChange={(e) => update("actualResult", e.target.value)}
@@ -177,7 +186,7 @@ export function TestResultForm({
           </QuestionField>
           {form.improvementNeeded === true ? (
             <div className="md:col-span-3">
-              <Field label="Describe the required improvements" error={errors.improvementDescription}>
+              <Field label="Describe the required improvements" required error={errors.improvementDescription}>
                 <Textarea
                   value={form.improvementDescription ?? ""}
                   onChange={(event) => update("improvementDescription", event.target.value)}
@@ -189,7 +198,7 @@ export function TestResultForm({
         </section>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <Field label="Status">
+          <Field label="Status" required>
             <Select value={form.status} onValueChange={(v) => update("status", v as typeof form.status)}>
               <SelectTrigger>
                 <SelectValue />
@@ -203,7 +212,43 @@ export function TestResultForm({
               </SelectContent>
             </Select>
           </Field>
-          <Field label="Grade" error={errors.grade}>
+          <Field
+            label="Grade"
+            required={form.status === "Pass"}
+            error={errors.grade}
+            labelAction={(
+              <div className="relative">
+                <button
+                  type="button"
+                  className="inline-flex size-6 items-center justify-center rounded-sm text-foreground-muted hover:bg-surface-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label="Show grade definitions"
+                  aria-expanded={showGradeDefinitions}
+                  aria-controls="grade-definitions"
+                  title="Show grade definitions"
+                  onClick={() => setShowGradeDefinitions((visible) => !visible)}
+                  onKeyDown={(event) => { if (event.key === "Escape") setShowGradeDefinitions(false); }}
+                >
+                  <Eye className="size-4" />
+                </button>
+                {showGradeDefinitions ? (
+                  <div id="grade-definitions" role="dialog" aria-label="Grade definitions" className="absolute right-0 top-7 z-20 w-72 rounded-md border border-border bg-background p-3 text-xs shadow-lg">
+                    <div className="mb-2 flex items-center justify-between font-semibold">
+                      Grade definitions
+                      <button type="button" className="text-foreground-muted hover:text-foreground" onClick={() => setShowGradeDefinitions(false)} aria-label="Close grade definitions">×</button>
+                    </div>
+                    <dl className="grid grid-cols-[2.5rem_1fr] gap-x-2 gap-y-1">
+                      <dt className="font-semibold">A</dt><dd>Fully meets expectations</dd>
+                      <dt className="font-semibold">B</dt><dd>Minor observations</dd>
+                      <dt className="font-semibold">C</dt><dd>Material workaround required</dd>
+                      <dt className="font-semibold">D</dt><dd>Major impairment</dd>
+                      <dt className="font-semibold">F</dt><dd>Unusable / control failure</dd>
+                      <dt className="font-semibold">N/A</dt><dd>Not graded</dd>
+                    </dl>
+                  </div>
+                ) : null}
+              </div>
+            )}
+          >
             <Select value={form.grade ?? ""} onValueChange={(v) => update("grade", v as typeof form.grade)}>
               <SelectTrigger>
                 <SelectValue placeholder="Select grade" />
@@ -217,7 +262,7 @@ export function TestResultForm({
               </SelectContent>
             </Select>
           </Field>
-          <Field label="Severity" error={errors.severity}>
+          <Field label="Severity" required={form.status === "Fail"} error={errors.severity}>
             <Select value={form.severity ?? ""} onValueChange={(v) => update("severity", v as typeof form.severity)}>
               <SelectTrigger>
                 <SelectValue placeholder="Select severity" />
@@ -235,13 +280,13 @@ export function TestResultForm({
 
         {form.status === "Blocked" ? (
           <div className="grid grid-cols-1 gap-4 rounded-md border border-border bg-surface p-4 sm:grid-cols-3">
-            <Field label="Blocked reason" error={errors.blockedReason}>
+            <Field label="Blocked reason" required={isBlocked} error={errors.blockedReason}>
               <Textarea value={form.blockedReason ?? ""} onChange={(e) => update("blockedReason", e.target.value)} />
             </Field>
-            <Field label="Owner" error={errors.blockedOwner}>
+            <Field label="Owner" required={isBlocked} error={errors.blockedOwner}>
               <Input value={form.blockedOwner ?? ""} onChange={(e) => update("blockedOwner", e.target.value)} />
             </Field>
-            <Field label="Target date" error={errors.blockedTargetDate}>
+            <Field label="Target date" required={isBlocked} error={errors.blockedTargetDate}>
               <Input
                 type="date"
                 value={form.blockedTargetDate ?? ""}
@@ -264,11 +309,20 @@ export function TestResultForm({
           </Field>
         ) : null}
 
-        <Field label="Defect" error={errors.defectId}>
+        <Field label="Defect" required={form.status === "Fail"} error={errors.defectId}>
           <DefectDialog
             testResultId={result.id}
             vendorId={vendorId}
-            onCreated={(defectId) => update("defectId", defectId)}
+            defect={linkedDefect}
+            onSaved={(savedDefect, resultVersion) => {
+              if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+              setLinkedDefect(savedDefect);
+              const nextForm = { ...form, defectId: savedDefect.id };
+              setForm(nextForm);
+              setVersion(resultVersion);
+              setIsDirty(true);
+              autosaveTimer.current = setTimeout(() => void handleSaveDraft(nextForm, resultVersion), 1500);
+            }}
           />
         </Field>
 
@@ -324,10 +378,19 @@ export function TestResultForm({
   );
 }
 
-function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) {
+function Field({ label, required = false, labelAction, error, children }: {
+  label: string;
+  required?: boolean;
+  labelAction?: React.ReactNode;
+  error?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex flex-col gap-1.5">
-      <Label>{label}</Label>
+      <div className="flex min-h-5 items-center gap-1">
+        <Label>{label}{required ? <RequiredMark /> : null}</Label>
+        {labelAction}
+      </div>
       {children}
       {error ? <p className="text-xs text-critical">{error}</p> : null}
     </div>

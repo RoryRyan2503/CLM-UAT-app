@@ -3,10 +3,12 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Download, FileUp, Trash2 } from "lucide-react";
+import { ArrowDownAZ, ArrowUpAZ, Download, FileUp, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import { RequiredMark } from "@/components/ui/required-mark";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
@@ -20,6 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   bulkCreateTestersAction,
+  bulkDeleteTestersAction,
   createTesterAction,
   deleteTesterAction,
   resetAccessCodeAction,
@@ -54,12 +57,19 @@ export function TestersManager({ testers, personas }: { testers: TesterRow[]; pe
   const [createOpen, setCreateOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<TesterRow | null>(null);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [createPersonaId, setCreatePersonaId] = useState("");
   const [editPersonaId, setEditPersonaId] = useState("");
   const [issuedCode, setIssuedCode] = useState<{ name: string; code: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<TesterRow | null>(null);
   const [bulkErrors, setBulkErrors] = useState<BulkImportError[]>([]);
   const [bulkCreated, setBulkCreated] = useState<BulkCreatedTester[]>([]);
+  const [search, setSearch] = useState("");
+  const [personaFilter, setPersonaFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [sortBy, setSortBy] = useState<"name" | "email" | "department" | "persona">("name");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  const [selectedTesterIds, setSelectedTesterIds] = useState<string[]>([]);
   const [isPending, startTransition] = useTransition();
 
   function handleCreate(formData: FormData) {
@@ -153,10 +163,59 @@ export function TestersManager({ testers, personas }: { testers: TesterRow[]; pe
         toast.error(res.error);
         return;
       }
-      toast.success(`${deleteTarget.name} and their testing data were deleted.`);
+      toast.success(`${deleteTarget.name} was deleted.`);
       setDeleteTarget(null);
       router.refresh();
     });
+  }
+
+  function handleBulkDelete() {
+    startTransition(async () => {
+      const res = await bulkDeleteTestersAction(selectedTesterIds);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success(`Deleted ${selectedTesterIds.length} tester${selectedTesterIds.length === 1 ? "" : "s"}.`);
+      setSelectedTesterIds([]);
+      setBulkDeleteOpen(false);
+      router.refresh();
+    });
+  }
+
+  const normalizedSearch = search.trim().toLowerCase();
+  const filteredTesters = testers
+    .filter((tester) => {
+      const matchesSearch = !normalizedSearch || [tester.name, tester.email, tester.department, tester.persona]
+        .some((value) => value?.toLowerCase().includes(normalizedSearch));
+      const filterPersona = personas.find((persona) => persona.id === personaFilter);
+      const matchesPersona = personaFilter === "all" || tester.persona_id === personaFilter ||
+        (!tester.persona_id && tester.persona?.trim().toLowerCase() === filterPersona?.name.trim().toLowerCase());
+      const matchesStatus = statusFilter === "all" ||
+        (statusFilter === "active" ? tester.is_active : !tester.is_active);
+      return matchesSearch && matchesPersona && matchesStatus;
+    })
+    .sort((left, right) => {
+      const leftValue = (left[sortBy] ?? "").toLowerCase();
+      const rightValue = (right[sortBy] ?? "").toLowerCase();
+      const comparison = leftValue.localeCompare(rightValue) || left.id.localeCompare(right.id);
+      return sortDirection === "asc" ? comparison : -comparison;
+    });
+  const visibleSelectedCount = filteredTesters.filter((tester) => selectedTesterIds.includes(tester.id)).length;
+  const allVisibleSelected = filteredTesters.length > 0 && visibleSelectedCount === filteredTesters.length;
+  const someVisibleSelected = visibleSelectedCount > 0 && !allVisibleSelected;
+
+  function toggleTester(testerId: string, checked: boolean) {
+    setSelectedTesterIds((previous) => checked
+      ? previous.includes(testerId) ? previous : [...previous, testerId]
+      : previous.filter((id) => id !== testerId));
+  }
+
+  function toggleVisibleTesters(checked: boolean) {
+    const visibleIds = new Set(filteredTesters.map((tester) => tester.id));
+    setSelectedTesterIds((previous) => checked
+      ? [...new Set([...previous, ...visibleIds])]
+      : previous.filter((id) => !visibleIds.has(id)));
   }
 
   return (
@@ -186,12 +245,12 @@ export function TestersManager({ testers, personas }: { testers: TesterRow[]; pe
             {bulkCreated.length === 0 ? (
               <form action={handleBulkCreate} className="flex flex-col gap-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-sm text-foreground-muted">Required columns: Name, Persona</span>
+                  <Label htmlFor="tester-roster-file" className="text-sm text-foreground-muted">Roster file<RequiredMark /> (columns: Name, Persona)</Label>
                   <Button type="button" variant="outline" size="sm" onClick={downloadRosterTemplate}>
                     <Download /> Download CSV template
                   </Button>
                 </div>
-                <Input name="file" type="file" accept=".csv,.xlsx,.xls" required disabled={isPending} />
+                <Input id="tester-roster-file" name="file" type="file" accept=".csv,.xlsx,.xls" required disabled={isPending} />
                 <p className="text-xs text-foreground-muted">Maximum file size: 2 MB. Access codes are generated after validation and shown once.</p>
                 {bulkErrors.length > 0 ? (
                   <div className="max-h-56 overflow-auto rounded-md border border-critical p-3" role="alert">
@@ -256,7 +315,7 @@ export function TestersManager({ testers, personas }: { testers: TesterRow[]; pe
             </DialogHeader>
             <form action={handleCreate} className="flex flex-col gap-4">
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="name">Name</Label>
+                <Label htmlFor="name">Name<RequiredMark /></Label>
                 <Input id="name" name="name" required />
               </div>
               <div className="flex flex-col gap-1.5">
@@ -268,7 +327,7 @@ export function TestersManager({ testers, personas }: { testers: TesterRow[]; pe
                 <Input id="department" name="department" />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label>Persona <span className="text-critical">*</span></Label>
+                <Label>Persona<RequiredMark /></Label>
                 {personas.length ? (
                   <Select value={createPersonaId} onValueChange={setCreatePersonaId} required>
                     <SelectTrigger><SelectValue placeholder="Select a configured persona" /></SelectTrigger>
@@ -298,10 +357,54 @@ export function TestersManager({ testers, personas }: { testers: TesterRow[]; pe
         </div>
       ) : null}
 
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="flex min-w-56 flex-1 flex-col gap-1.5">
+          <Label htmlFor="tester-search">Search testers</Label>
+          <Input id="tester-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name, email, department…" />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="tester-persona-filter">Persona</Label>
+          <select id="tester-persona-filter" className="h-10 rounded-md border border-border bg-background px-3 text-sm" value={personaFilter} onChange={(event) => setPersonaFilter(event.target.value)}>
+            <option value="all">All personas</option>
+            {personas.map((persona) => <option key={persona.id} value={persona.id}>{persona.name}</option>)}
+          </select>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="tester-status-filter">Status</Label>
+          <select id="tester-status-filter" className="h-10 rounded-md border border-border bg-background px-3 text-sm" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+            <option value="all">All statuses</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="tester-sort">Sort by</Label>
+          <select id="tester-sort" className="h-10 rounded-md border border-border bg-background px-3 text-sm" value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)}>
+            <option value="name">Name</option>
+            <option value="email">Email</option>
+            <option value="department">Department</option>
+            <option value="persona">Persona</option>
+          </select>
+        </div>
+        <Button type="button" size="icon" variant="outline" onClick={() => setSortDirection((direction) => direction === "asc" ? "desc" : "asc")} aria-label={`Sort ${sortDirection === "asc" ? "descending" : "ascending"}`} title={`Currently ${sortDirection === "asc" ? "ascending" : "descending"}`}>
+          {sortDirection === "asc" ? <ArrowDownAZ /> : <ArrowUpAZ />}
+        </Button>
+        <div className="flex h-10 items-center gap-2 px-1 text-sm">
+          <Checkbox aria-label="Select all visible testers" checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false} onCheckedChange={(checked) => toggleVisibleTesters(checked === true)} />
+          <span>Select all visible ({filteredTesters.length})</span>
+        </div>
+        <Button type="button" variant="destructive" disabled={isPending || selectedTesterIds.length === 0} onClick={() => setBulkDeleteOpen(true)}>
+          <Trash2 /> Delete selected ({selectedTesterIds.length})
+        </Button>
+      </div>
+
       <div className="overflow-hidden rounded-lg border border-border bg-background">
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-10">
+                <Checkbox aria-label="Select all visible testers" checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false} onCheckedChange={(checked) => toggleVisibleTesters(checked === true)} />
+              </TableHead>
               <TableHead>Name</TableHead>
               <TableHead>Department</TableHead>
               <TableHead>Persona</TableHead>
@@ -310,15 +413,16 @@ export function TestersManager({ testers, personas }: { testers: TesterRow[]; pe
             </TableRow>
           </TableHeader>
           <TableBody>
-            {testers.map((t) => (
+            {filteredTesters.map((t) => (
               <TableRow key={t.id}>
-                <TableCell className="font-medium">{t.name}</TableCell>
+                <TableCell><Checkbox aria-label={`Select ${t.name}`} checked={selectedTesterIds.includes(t.id)} onCheckedChange={(checked) => toggleTester(t.id, checked === true)} /></TableCell>
+                <TableCell className="font-medium">{t.name}{t.email ? <div className="text-xs font-normal text-foreground-muted">{t.email}</div> : null}</TableCell>
                 <TableCell>{t.department ?? "—"}</TableCell>
                 <TableCell>{t.persona ?? "—"}</TableCell>
                 <TableCell>
                   <Badge variant={t.is_active ? "success" : "outline"}>{t.is_active ? "Active" : "Inactive"}</Badge>
                 </TableCell>
-                <TableCell className="flex justify-end gap-2">
+                <TableCell><div className="flex justify-end gap-2">
                   <Button size="sm" variant="outline" disabled={isPending || personas.length === 0} onClick={() => openEdit(t)}>
                     Edit
                   </Button>
@@ -336,9 +440,10 @@ export function TestersManager({ testers, personas }: { testers: TesterRow[]; pe
                   <Button size="icon" variant="destructive" disabled={isPending} onClick={() => setDeleteTarget(t)} aria-label={`Delete ${t.name}`} title="Delete tester and all associated test data">
                     <Trash2 />
                   </Button>
-                </TableCell>
+                </div></TableCell>
               </TableRow>
             ))}
+            {filteredTesters.length === 0 ? <TableRow><TableCell colSpan={6} className="py-8 text-center text-sm text-foreground-muted">No testers match these filters.</TableCell></TableRow> : null}
           </TableBody>
         </Table>
       </div>
@@ -351,11 +456,11 @@ export function TestersManager({ testers, personas }: { testers: TesterRow[]; pe
           </DialogHeader>
           {editTarget ? (
             <form action={handleEdit} className="flex flex-col gap-4">
-              <div className="flex flex-col gap-1.5"><Label htmlFor="edit-name">Name</Label><Input id="edit-name" name="name" required defaultValue={editTarget.name} /></div>
+              <div className="flex flex-col gap-1.5"><Label htmlFor="edit-name">Name<RequiredMark /></Label><Input id="edit-name" name="name" required defaultValue={editTarget.name} /></div>
               <div className="flex flex-col gap-1.5"><Label htmlFor="edit-email">Email</Label><Input id="edit-email" name="email" type="email" defaultValue={editTarget.email ?? ""} /></div>
               <div className="flex flex-col gap-1.5"><Label htmlFor="edit-department">Department</Label><Input id="edit-department" name="department" defaultValue={editTarget.department ?? ""} /></div>
               <div className="flex flex-col gap-1.5">
-                <Label>Persona <span className="text-critical">*</span></Label>
+                <Label>Persona<RequiredMark /></Label>
                 <Select value={editPersonaId} onValueChange={setEditPersonaId} required>
                   <SelectTrigger><SelectValue placeholder="Select a configured persona" /></SelectTrigger>
                   <SelectContent>{personas.map((persona) => <SelectItem key={persona.id} value={persona.id}>{persona.name}</SelectItem>)}</SelectContent>
@@ -371,18 +476,35 @@ export function TestersManager({ testers, personas }: { testers: TesterRow[]; pe
         </DialogContent>
       </Dialog>
 
+      <Dialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete selected testers?</DialogTitle>
+            <DialogDescription>
+              Delete {selectedTesterIds.length} selected tester{selectedTesterIds.length === 1 ? "" : "s"} only if they have no evaluation data or history. If any selected tester has been used, the entire deletion is blocked and no evaluation history is removed.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setBulkDeleteOpen(false)} disabled={isPending}>Cancel</Button>
+            <Button type="button" variant="destructive" onClick={handleBulkDelete} disabled={isPending}>
+              {isPending ? "Checking and deleting…" : "Delete selected"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete tester and testing data?</DialogTitle>
             <DialogDescription>
-              This permanently deletes {deleteTarget?.name ?? "this tester"}, their access sessions, assignments, results, evidence records, defects, and comparisons. This cannot be undone.
+              Delete {deleteTarget?.name ?? "this tester"} only if they have no evaluation data or history. If they have been used, deletion is blocked; deactivate them instead to preserve history.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setDeleteTarget(null)} disabled={isPending}>Cancel</Button>
             <Button type="button" variant="destructive" onClick={handleDelete} disabled={isPending}>
-              {isPending ? "Deleting…" : "Delete permanently"}
+              {isPending ? "Checking and deleting…" : "Delete tester"}
             </Button>
           </DialogFooter>
         </DialogContent>

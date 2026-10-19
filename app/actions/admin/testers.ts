@@ -7,14 +7,22 @@ import {
   updateTester,
   setTesterActive,
   deleteTester,
+  deleteTesters,
   resetAccessCode,
 } from "@/lib/data/testers";
 import { createTesterSchema } from "@/lib/validation/tester";
 import { AppError, runAction } from "@/lib/actionResult";
 import { revalidatePath } from "next/cache";
 import { parseTesterRoster } from "@/lib/import/parseTesterRoster";
+import { testerDeleteBatchSchema, testerIdSchema } from "@/lib/validation/testerDeletion";
 
 const MAX_TESTER_ROSTER_BYTES = 2 * 1024 * 1024;
+
+function validateTesterId(testerId: string): string {
+  const parsed = testerIdSchema.safeParse(testerId);
+  if (!parsed.success) throw new AppError("VALIDATION", "Select a valid tester.");
+  return parsed.data;
+}
 
 export async function createTesterAction(formData: FormData) {
   return runAction(async () => {
@@ -77,7 +85,7 @@ export async function updateTesterAction(testerId: string, formData: FormData) {
       personaId: formData.get("personaId"),
     });
     if (!parsed.success) throw new AppError("VALIDATION", "Please check the tester details.");
-    const result = await updateTester(testerId, parsed.data);
+    const result = await updateTester(validateTesterId(testerId), parsed.data);
     revalidatePath("/admin/testers");
     return result;
   });
@@ -86,7 +94,8 @@ export async function updateTesterAction(testerId: string, formData: FormData) {
 export async function setTesterActiveAction(testerId: string, isActive: boolean) {
   return runAction(async () => {
     await requireAdminSession();
-    const result = await setTesterActive(testerId, isActive);
+    if (typeof isActive !== "boolean") throw new AppError("VALIDATION", "Select a valid status.");
+    const result = await setTesterActive(validateTesterId(testerId), isActive);
     revalidatePath("/admin/testers");
     return result;
   });
@@ -95,7 +104,7 @@ export async function setTesterActiveAction(testerId: string, isActive: boolean)
 export async function deleteTesterAction(testerId: string) {
   return runAction(async () => {
     await requireAdminSession();
-    await deleteTester(testerId);
+    await deleteTester(validateTesterId(testerId));
     revalidatePath("/admin/testers");
     revalidatePath("/admin/assignments");
     revalidatePath("/admin");
@@ -106,8 +115,21 @@ export async function deleteTesterAction(testerId: string) {
 export async function resetAccessCodeAction(testerId: string) {
   return runAction(async () => {
     await requireAdminSession();
-    const accessCode = await resetAccessCode(testerId);
+    const accessCode = await resetAccessCode(validateTesterId(testerId));
     revalidatePath("/admin/testers");
     return { accessCode };
+  });
+}
+
+export async function bulkDeleteTestersAction(testerIds: string[]) {
+  return runAction(async () => {
+    await requireAdminSession();
+    const parsed = testerDeleteBatchSchema.safeParse(testerIds);
+    if (!parsed.success) throw new AppError("VALIDATION", "Select 1 to 100 distinct valid tester IDs.");
+    await deleteTesters(parsed.data);
+    revalidatePath("/admin/testers");
+    revalidatePath("/admin/assignments");
+    revalidatePath("/admin");
+    return null;
   });
 }

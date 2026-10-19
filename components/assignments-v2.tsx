@@ -166,10 +166,10 @@ function FragmentRow({ item, vendor, status, isOpen, loading, workflow, testerId
             </div>
             <details className="rounded-md border border-border bg-background"><summary className="cursor-pointer px-4 py-3 text-sm font-medium">Test definition and suggested steps</summary><div className="grid gap-4 border-t border-border p-4 text-sm"><Definition label="Suggested Steps" value={workflow.testCase.suggested_steps} /><Definition label="Expected Result" value={workflow.testCase.expected_result} /><Definition label="Required Evidence" value={workflow.testCase.required_evidence} /></div></details>
               <div hidden={vendor !== "ironclad"}>
-                <TestResultForm key={ironclad.result.id} vendorName={ironclad.vendorName} assignmentId={ironclad.assignment.id} vendorId={ironclad.assignment.vendor_id} result={ironclad.result} evidence={ironclad.evidence} evidenceEnabled={evidenceEnabled} onSaved={onSaved} />
+                <TestResultForm key={ironclad.result.id} vendorName={ironclad.vendorName} assignmentId={ironclad.assignment.id} vendorId={ironclad.assignment.vendor_id} result={ironclad.result} evidence={ironclad.evidence} defect={ironclad.defect} evidenceEnabled={evidenceEnabled} onSaved={onSaved} />
               </div>
               <div hidden={vendor !== "sirion"}>
-                <TestResultForm key={sirion.result.id} vendorName={sirion.vendorName} assignmentId={sirion.assignment.id} vendorId={sirion.assignment.vendor_id} result={sirion.result} evidence={sirion.evidence} evidenceEnabled={evidenceEnabled} onSaved={onSaved} />
+                <TestResultForm key={sirion.result.id} vendorName={sirion.vendorName} assignmentId={sirion.assignment.id} vendorId={sirion.assignment.vendor_id} result={sirion.result} evidence={sirion.evidence} defect={sirion.defect} evidenceEnabled={evidenceEnabled} onSaved={onSaved} />
               </div>
             {bothComplete ? <ComparisonForm testerId={testerId} testCaseId={workflow.testCase.id} ironclad={workflow.ironclad} sirion={workflow.sirion} comparison={workflow.comparison} /> : <div className="flex items-center gap-2 text-xs text-foreground-muted"><AlertCircle className="size-4" />Complete both vendors to record a comparison and preference.</div>}
           </div>

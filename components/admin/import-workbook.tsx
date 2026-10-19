@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import { RequiredMark } from "@/components/ui/required-mark";
 import { previewImportAction, commitImportAction } from "@/app/actions/admin/import";
 import type { ImportPreview } from "@/lib/validation/import";
 
@@ -50,7 +52,10 @@ export function ImportWorkbook() {
         </CardHeader>
         <CardContent>
           <form action={handlePreview} className="flex items-center gap-3">
-            <input ref={fileInputRef} type="file" name="file" accept=".xlsx,.csv" required className="text-sm" />
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="test-case-workbook">Workbook or CSV<RequiredMark /></Label>
+              <input ref={fileInputRef} id="test-case-workbook" type="file" name="file" accept=".xlsx,.csv" required className="text-sm" />
+            </div>
             <Button type="submit" disabled={isPending}>
               Preview
             </Button>

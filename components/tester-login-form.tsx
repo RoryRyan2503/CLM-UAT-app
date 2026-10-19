@@ -7,6 +7,7 @@ import { testerLoginAction } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { RequiredMark } from "@/components/ui/required-mark";
 
 export function TesterLoginForm() {
   const router = useRouter();
@@ -30,11 +31,11 @@ export function TesterLoginForm() {
   return (
     <form action={handleSubmit} className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="identifier">Name or email</Label>
+        <Label htmlFor="identifier">Name or email<RequiredMark /></Label>
         <Input id="identifier" name="identifier" required autoComplete="username" placeholder="Jane Doe or jane@example.com" />
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="accessCode">Access code</Label>
+        <Label htmlFor="accessCode">Access code<RequiredMark /></Label>
         <Input
           id="accessCode"
           name="accessCode"

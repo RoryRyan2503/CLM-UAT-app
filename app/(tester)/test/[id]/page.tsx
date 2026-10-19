@@ -85,6 +85,7 @@ export default async function TestCasePage({ params }: { params: Promise<{ id: s
             assignmentId={workflow.ironclad.assignment.id}
             result={workflow.ironclad.result}
             evidence={workflow.ironclad.evidence}
+            defect={workflow.ironclad.defect}
             evidenceEnabled={evidenceEnabled}
             vendorId={workflow.ironclad.assignment.vendor_id}
           />
@@ -96,6 +97,7 @@ export default async function TestCasePage({ params }: { params: Promise<{ id: s
             assignmentId={workflow.sirion.assignment.id}
             result={workflow.sirion.result}
             evidence={workflow.sirion.evidence}
+            defect={workflow.sirion.defect}
             evidenceEnabled={evidenceEnabled}
             vendorId={workflow.sirion.assignment.vendor_id}
           />

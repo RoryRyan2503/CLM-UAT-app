@@ -52,13 +52,15 @@ export async function getTestCaseWorkflow(
   if (assignments.length === 0) throw new AppError("FORBIDDEN", "You are not assigned to this test case.");
 
   const resultIds = assignments.map(({ result }) => result.id);
-  const defectIds = assignments.flatMap(({ result }) => result.defect_id ? [result.defect_id] : []);
   const [{ rows: evidenceRows }, { rows: defects }] = await Promise.all([
     query<EvidenceRow>(
       "select * from evidence where test_result_id = any($1::uuid[]) order by created_at desc",
       [resultIds],
     ),
-    query<DefectRow>("select * from defects where id = any($1::uuid[])", [defectIds]),
+    query<DefectRow>(
+      `select * from defects where test_result_id = any($1::uuid[]) order by created_at desc, id desc`,
+      [resultIds],
+    ),
   ]);
   const evidenceByResult = new Map<string, EvidenceRow[]>();
   for (const evidence of evidenceRows) {
@@ -66,16 +68,23 @@ export async function getTestCaseWorkflow(
     list.push(evidence);
     evidenceByResult.set(evidence.test_result_id, list);
   }
-  const defectsById = new Map(defects.map((defect) => [defect.id, defect]));
+  const defectsByResult = new Map<string, DefectRow[]>();
+  for (const defect of defects) {
+    const resultDefects = defectsByResult.get(defect.test_result_id) ?? [];
+    resultDefects.push(defect);
+    defectsByResult.set(defect.test_result_id, resultDefects);
+  }
   const slices = new Map<string, VendorWorkflowSlice>();
   for (const row of assignments) {
+    const resultDefects = defectsByResult.get(row.result.id) ?? [];
+    const defect = resultDefects.find((item) => item.id === row.result.defect_id) ?? resultDefects[0] ?? null;
     slices.set(row.vendor_slug, {
       vendorSlug: row.vendor_slug,
       vendorName: row.vendor_name,
       assignment: row.assignment,
       result: row.result,
       evidence: evidenceByResult.get(row.result.id) ?? [],
-      defect: row.result.defect_id ? defectsById.get(row.result.defect_id) ?? null : null,
+      defect,
     });
   }
   const ironclad = slices.get("ironclad");

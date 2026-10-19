@@ -5,6 +5,7 @@ import { generateAccessCode, hashAccessCodeForLookup, hashAccessCodeForStorage }
 import type { CreateTesterInput } from "@/lib/validation/tester";
 import type { Database } from "@/lib/types/database";
 import type { TesterRosterError, TesterRosterRow } from "@/lib/import/parseTesterRoster";
+import { testerDeleteBatchSchema } from "@/lib/validation/testerDeletion";
 
 type TesterRow = Database["public"]["Tables"]["testers"]["Row"];
 
@@ -141,8 +142,60 @@ export async function setTesterActive(testerId: string, isActive: boolean) {
 }
 
 export async function deleteTester(testerId: string): Promise<void> {
-  const { rowCount } = await query("delete from testers where id = $1", [testerId]);
-  if (!rowCount) throw new AppError("VALIDATION", "Unable to delete tester.");
+  await deleteTesters([testerId]);
+}
+
+export async function deleteTesters(testerIds: string[]): Promise<void> {
+  const parsed = testerDeleteBatchSchema.safeParse(testerIds);
+  if (!parsed.success) throw new AppError("VALIDATION", "Select 1 to 100 distinct valid tester IDs.");
+  const ids = parsed.data;
+
+  await withTransaction(async (client) => {
+    /* SECURITY_NOTE: Parent FOR UPDATE locks block concurrent FK inserts; result locks
+       serialize draft writes. Check after locking, before any cascading delete. */
+    const { rows: testers } = await client.query<{ id: string }>(
+      "select id from testers where id = any($1::uuid[]) order by id for update", [ids],
+    );
+    if (testers.length !== ids.length) {
+      throw new AppError("NOT_FOUND", "A selected tester no longer exists. No testers were deleted.");
+    }
+    await client.query(
+      "select id from assignments where tester_id = any($1::uuid[]) order by id for update", [ids],
+    );
+    await client.query(
+      `select tr.id from test_results tr join assignments a on a.id = tr.assignment_id
+       where a.tester_id = any($1::uuid[]) order by tr.id for update of tr`, [ids],
+    );
+    const { rows } = await client.query<{ protected: boolean }>(
+      `with selected_assignments as (
+         select id from assignments where tester_id = any($1::uuid[])
+       ), selected_results as (
+         select tr.* from test_results tr where tr.assignment_id in (select id from selected_assignments)
+       )
+       select (
+         exists (
+           select 1 from selected_results tr
+           where tr.updated_at is distinct from tr.created_at
+              or jsonb_strip_nulls(to_jsonb(tr) - array['id', 'assignment_id', 'created_at', 'updated_at'])
+                 is distinct from '{"status":"Not Started","version":1}'::jsonb
+         )
+         or exists (select 1 from test_results where updated_by_tester_id = any($1::uuid[]))
+         or exists (select 1 from result_history where test_result_id in (select id from selected_results)
+                    or changed_by_tester_id = any($1::uuid[]))
+         or exists (select 1 from evidence where test_result_id in (select id from selected_results)
+                    or created_by_tester_id = any($1::uuid[]))
+         or exists (select 1 from defects where test_result_id in (select id from selected_results)
+                    or created_by_tester_id = any($1::uuid[])
+                    or retest_assignment_id in (select id from selected_assignments))
+         or exists (select 1 from comparisons where tester_id = any($1::uuid[]))
+       ) as protected`, [ids],
+    );
+    if (rows[0]?.protected !== false) {
+      throw new AppError("CONFLICT", "A selected tester has evaluation data or history. No testers were deleted. Deactivate them instead.");
+    }
+    const { rowCount } = await client.query("delete from testers where id = any($1::uuid[])", [ids]);
+    if (rowCount !== ids.length) throw new AppError("CONFLICT", "Unable to delete all selected testers.");
+  });
 }
 
 export async function resetAccessCode(testerId: string): Promise<string> {
