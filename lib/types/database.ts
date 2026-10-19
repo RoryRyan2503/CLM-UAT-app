@@ -379,8 +379,8 @@ export interface Database {
         Relationships: [];
       };
       app_settings: {
-        Row: { id: number; evidence_enabled: boolean; updated_at: string };
-        Insert: { id?: number; evidence_enabled?: boolean; updated_at?: string };
+        Row: { id: number; evidence_enabled: boolean; evidence_mode: "disabled" | "sharepoint" | "upload"; updated_at: string };
+        Insert: { id?: number; evidence_enabled?: boolean; evidence_mode?: "disabled" | "sharepoint" | "upload"; updated_at?: string };
         Update: Partial<Database["public"]["Tables"]["app_settings"]["Insert"]>;
         Relationships: [];
       };

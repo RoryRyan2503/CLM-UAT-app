@@ -4,7 +4,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { extname, isAbsolute, relative, resolve } from "node:path";
 import { query } from "@/lib/db/pool";
 import { AppError } from "@/lib/actionResult";
-import { getEvidenceEnabled } from "@/lib/data/appSettings";
+import { getEvidenceMode } from "@/lib/data/appSettings";
 import type { Database } from "@/lib/types/database";
 
 const MAX_EVIDENCE_BYTES = 10 * 1024 * 1024;
@@ -37,9 +37,10 @@ function resolveEvidencePath(storagePath: string): string {
   return filePath;
 }
 
-async function assertEvidenceCollectionEnabled() {
-  if (!(await getEvidenceEnabled())) {
-    throw new AppError("FORBIDDEN", "Evidence collection is disabled by an administrator.");
+async function assertEvidenceMode(requiredMode: "upload" | "sharepoint") {
+  const mode = await getEvidenceMode();
+  if (mode !== requiredMode) {
+    throw new AppError("FORBIDDEN", "This evidence method is not enabled by an administrator.");
   }
 }
 
@@ -58,7 +59,7 @@ async function assertTesterOwnsResult(testerId: string, testResultId: string) {
 
 export async function uploadEvidenceFile(testerId: string, testResultId: string, file: File) {
   const canonicalResultId = await assertTesterOwnsResult(testerId, testResultId);
-  await assertEvidenceCollectionEnabled();
+  await assertEvidenceMode("upload");
   const fileName = file.name.split(/[\\/]/).pop()?.trim() ?? "";
   const extension = extname(fileName).toLowerCase();
   if (!fileName || fileName.length > 255 || /[\u0000-\u001f]/.test(fileName) || !ALLOWED_EXTENSIONS.has(extension)) {
@@ -93,15 +94,19 @@ export async function uploadEvidenceFile(testerId: string, testResultId: string,
 
 export async function registerEvidenceUrl(testerId: string, testResultId: string, url: string) {
   await assertTesterOwnsResult(testerId, testResultId);
-  await assertEvidenceCollectionEnabled();
+  await assertEvidenceMode("sharepoint");
   let parsed: URL;
   try {
     parsed = new URL(url);
   } catch {
     throw new AppError("VALIDATION", "Enter a valid HTTP or HTTPS link.");
   }
-  if (!["https:", "http:"].includes(parsed.protocol) || url.length > 2048) {
-    throw new AppError("VALIDATION", "Enter a valid HTTP or HTTPS link.");
+  const allowedSharePointDomains = ["sharepoint.com", "sharepoint.us", "sharepoint.de", "sharepoint.cn"];
+  const isSharePointHost = allowedSharePointDomains.some((domain) =>
+    parsed.hostname.toLowerCase() === domain || parsed.hostname.toLowerCase().endsWith(`.${domain}`),
+  );
+  if (parsed.protocol !== "https:" || !isSharePointHost || parsed.username || parsed.password || url.length > 2048) {
+    throw new AppError("VALIDATION", "Enter a valid HTTPS SharePoint URL.");
   }
   const { rows } = await query<Database["public"]["Tables"]["evidence"]["Row"]>(
     `insert into evidence (test_result_id, kind, url, created_by_tester_id)

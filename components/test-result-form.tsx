@@ -40,7 +40,7 @@ export function TestResultForm({
   result,
   evidence,
   defect,
-  evidenceEnabled,
+  evidenceMode,
   onSaved,
 }: {
   vendorName: string;
@@ -49,7 +49,7 @@ export function TestResultForm({
   result: TestResultRow;
   evidence: EvidenceRow[];
   defect: DefectRow | null;
-  evidenceEnabled: boolean;
+  evidenceMode: "disabled" | "sharepoint" | "upload";
   onSaved?: () => void;
 }) {
   // Keyed by result.id at the call site (see test case page), so a new assignment/result
@@ -325,11 +325,12 @@ export function TestResultForm({
           </div>
         ) : null}
 
-        {evidenceEnabled ? (
+        {evidenceMode !== "disabled" ? (
           <Field label="Evidence (optional)" error={errors.evidence}>
             <EvidenceManager
               testResultId={result.id}
               evidence={evidenceList}
+              mode={evidenceMode}
               onAdded={(e) => {
                 setEvidenceList((prev) => [e, ...prev]);
                 setIsDirty(true);

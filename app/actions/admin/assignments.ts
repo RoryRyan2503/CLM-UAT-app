@@ -4,6 +4,7 @@ import { z } from "zod";
 import { requireAdminSession } from "@/lib/auth/adminSession";
 import {
   applyPersonaDefaults,
+  applyPersonaDefaultsToTesters,
   createPersona,
   setPersonaTestCase,
   setPersonaTestCases,
@@ -19,6 +20,7 @@ const personaCaseSchema = z.object({ personaId: z.string().uuid(), testCaseId: z
 const personaCasesSchema = z.object({ personaId: z.string().uuid(), testCaseIds: z.array(z.string().uuid()).max(200), included: z.boolean() });
 const testerCasesSchema = z.object({ testerId: z.string().uuid(), testCaseIds: z.array(z.string().uuid()).max(200), assigned: z.boolean() });
 const testerIdSchema = z.string().uuid();
+const testerIdsSchema = z.array(z.string().uuid()).min(1).max(200);
 
 function revalidateAssignmentViews() {
   revalidatePath("/admin/assignments");
@@ -88,6 +90,19 @@ export async function applyPersonaDefaultsAction(testerId: string) {
     const parsed = testerIdSchema.safeParse(testerId);
     if (!parsed.success) throw new AppError("VALIDATION", "Invalid tester.");
     const result = await applyPersonaDefaults(parsed.data);
+    revalidateAssignmentViews();
+    revalidatePath("/assignments");
+    revalidatePath("/assignments-v2");
+    return result;
+  });
+}
+
+export async function applyPersonaDefaultsToTestersAction(input: unknown) {
+  return runAction(async () => {
+    await requireAdminSession();
+    const parsed = testerIdsSchema.safeParse(input);
+    if (!parsed.success) throw new AppError("VALIDATION", "Select between 1 and 200 active testers.");
+    const result = await applyPersonaDefaultsToTesters(parsed.data);
     revalidateAssignmentViews();
     revalidatePath("/assignments");
     revalidatePath("/assignments-v2");

@@ -25,10 +25,12 @@ type EvidenceRow = Database["public"]["Tables"]["evidence"]["Row"];
 export function EvidenceManager({
   testResultId,
   evidence,
+  mode,
   onAdded,
 }: {
   testResultId: string;
   evidence: EvidenceRow[];
+  mode: "sharepoint" | "upload";
   onAdded: (evidence: EvidenceRow) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -92,39 +94,45 @@ export function EvidenceManager({
           </Button>
         ))}
       </div>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogTrigger asChild>
-          <Button type="button" variant="outline" size="sm" className="w-fit">
-            <Plus /> Add evidence
-          </Button>
-        </DialogTrigger>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Add evidence</DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col gap-4">
+      {mode === "sharepoint" ? (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+          <div className="flex flex-1 flex-col gap-1.5">
+            <label htmlFor={`sharepoint-evidence-${testResultId}`} className="text-sm font-medium">SharePoint evidence URL</label>
+            <Input
+              id={`sharepoint-evidence-${testResultId}`}
+              type="url"
+              value={url}
+              onChange={(event) => setUrl(event.target.value)}
+              placeholder="https://tenant.sharepoint.com/..."
+              maxLength={2048}
+            />
+          </div>
+          <Button type="button" onClick={handleAddUrl} disabled={!url.trim()}>Add link</Button>
+        </div>
+      ) : (
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogTrigger asChild>
+            <Button type="button" variant="outline" size="sm" className="w-fit">
+              <Plus /> Add evidence file
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Upload evidence</DialogTitle>
+            </DialogHeader>
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium">Upload a file</label>
+              <label className="text-sm font-medium">Evidence file</label>
               <Input
                 type="file"
                 accept=".pdf,.png,.jpg,.jpeg,.txt,.csv,.xls,.xlsx,.doc,.docx"
                 disabled={isUploading}
-                onChange={(e) => handleFileChange(e.target.files?.[0])}
+                onChange={(event) => handleFileChange(event.target.files?.[0])}
               />
             </div>
-            <div className="flex items-end gap-2">
-              <div className="flex flex-1 flex-col gap-1.5">
-                <label className="text-sm font-medium">Or link to evidence</label>
-                <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" />
-              </div>
-              <Button type="button" onClick={handleAddUrl}>
-                Add link
-              </Button>
-            </div>
-          </div>
-          <DialogFooter />
-        </DialogContent>
-      </Dialog>
+            <DialogFooter />
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

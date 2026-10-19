@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   applyPersonaDefaultsAction,
+  applyPersonaDefaultsToTestersAction,
   createPersonaAction,
   setPersonaTestCasesAction,
   setTesterCasesAction,
@@ -44,6 +45,10 @@ export function AssignmentManager({ overview }: { overview: AdminAssignmentOverv
   const [testerArea, setTesterArea] = useState(ALL_AREAS);
   const [personaSearch, setPersonaSearch] = useState("");
   const [testerSearch, setTesterSearch] = useState("");
+  const [testerListSearch, setTesterListSearch] = useState("");
+  const [testerSort, setTesterSort] = useState<"name" | "persona" | "assignments" | "progress">("name");
+  const [caseSort, setCaseSort] = useState<"id" | "area" | "scenario">("id");
+  const [bulkTesterIds, setBulkTesterIds] = useState<string[]>([]);
   const [draftAssignedIds, setDraftAssignedIds] = useState<string[]>(overview.testerCaseIds[selectedTesterId] ?? []);
   const [isPending, startTransition] = useTransition();
 
@@ -52,16 +57,28 @@ export function AssignmentManager({ overview }: { overview: AdminAssignmentOverv
   const selectedTester = activeTesters.find((tester) => tester.id === selectedTesterId) ?? null;
   const assignedSet = new Set(draftAssignedIds);
 
+  const filteredTesters = overview.testers
+    .filter((tester) => !testerListSearch || `${tester.name} ${tester.email ?? ""} ${tester.persona ?? ""}`.toLowerCase().includes(testerListSearch.toLowerCase()))
+    .sort((left, right) => {
+      if (testerSort === "persona") return (left.persona ?? "").localeCompare(right.persona ?? "") || left.name.localeCompare(right.name);
+      if (testerSort === "assignments") return right.assignedCaseCount - left.assignedCaseCount || left.name.localeCompare(right.name);
+      if (testerSort === "progress") {
+        const leftProgress = left.totalAssignments ? left.completedAssignments / left.totalAssignments : 0;
+        const rightProgress = right.totalAssignments ? right.completedAssignments / right.totalAssignments : 0;
+        return rightProgress - leftProgress || left.name.localeCompare(right.name);
+      }
+      return left.name.localeCompare(right.name);
+    });
   const filteredPersonaCases = overview.testCases.filter((testCase) =>
     testCase.isActive &&
     (personaArea === ALL_AREAS || testCase.functionalArea === personaArea) &&
     (!personaSearch || `${testCase.testCaseId} ${testCase.scenario}`.toLowerCase().includes(personaSearch.toLowerCase())),
-  );
+  ).sort((left, right) => compareCases(left, right, caseSort));
   const filteredTesterCases = overview.testCases.filter((testCase) =>
     (testCase.isActive || assignedSet.has(testCase.id)) &&
     (testerArea === ALL_AREAS || testCase.functionalArea === testerArea) &&
     (!testerSearch || `${testCase.testCaseId} ${testCase.scenario}`.toLowerCase().includes(testerSearch.toLowerCase())),
-  );
+  ).sort((left, right) => compareCases(left, right, caseSort));
   const personaSet = new Set(selectedPersonaId ? draftPersonaCaseIds[selectedPersonaId] ?? [] : []);
   const testerSummary = selectedTester ? overview.testers.find((tester) => tester.id === selectedTester.id) : null;
 
@@ -179,6 +196,45 @@ export function AssignmentManager({ overview }: { overview: AdminAssignmentOverv
     });
   }
 
+  function toggleBulkTester(testerId: string, selected: boolean) {
+    setBulkTesterIds((current) => selected
+      ? [...new Set([...current, testerId])]
+      : current.filter((id) => id !== testerId));
+  }
+
+  function selectVisibleTesters(selected: boolean) {
+    const visibleActiveIds = filteredTesters.filter((tester) => tester.isActive).map((tester) => tester.id);
+    setBulkTesterIds((current) => selected
+      ? [...new Set([...current, ...visibleActiveIds])]
+      : current.filter((id) => !visibleActiveIds.includes(id)));
+  }
+
+  function applyDefaultsToSelectedTesters() {
+    const selectedIds = bulkTesterIds.filter((id) => activeTesters.some((tester) => tester.id === id));
+    if (!selectedIds.length) return;
+    run(async () => {
+      const response = await applyPersonaDefaultsToTestersAction(selectedIds);
+      if (!response.ok) throw new Error(response.error);
+      const addedByTester = new Map<string, string[]>();
+      for (const testerId of selectedIds) {
+        const personaId = testerPersonaIds[testerId];
+        if (personaId) addedByTester.set(testerId, personaCaseIds[personaId] ?? []);
+      }
+      setTesterCaseIds((current) => {
+        const next = { ...current };
+        for (const [testerId, caseIds] of addedByTester) {
+          next[testerId] = [...new Set([...(next[testerId] ?? []), ...caseIds])];
+        }
+        return next;
+      });
+      if (selectedTesterId && addedByTester.has(selectedTesterId)) {
+        setDraftAssignedIds((current) => [...new Set([...current, ...(addedByTester.get(selectedTesterId) ?? [])])]);
+      }
+      toast.success(`Persona defaults applied to ${response.data.testersApplied} testers; ${response.data.casesAdded} tester-case pairs added. ${response.data.testersSkipped} skipped (no configured defaults).`);
+      setBulkTesterIds([]);
+    });
+  }
+
   function saveTesterAssignments() {
     if (!selectedTester) return;
     run(async () => {
@@ -238,6 +294,7 @@ export function AssignmentManager({ overview }: { overview: AdminAssignmentOverv
               <div className="flex flex-col gap-3 lg:flex-row">
                 <div className="relative flex-1"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-foreground-muted" /><Input className="pl-9" placeholder="Search test cases" value={personaSearch} onChange={(event) => setPersonaSearch(event.target.value)} /></div>
                 <select aria-label="Filter persona cases by area" className="h-10 rounded-md border border-border bg-background px-3 text-sm" value={personaArea} onChange={(event) => setPersonaArea(event.target.value)}><option value={ALL_AREAS}>All functional areas</option>{areas.map((area) => <option key={area} value={area}>{area}</option>)}</select>
+                <select aria-label="Sort persona test cases" className="h-10 rounded-md border border-border bg-background px-3 text-sm" value={caseSort} onChange={(event) => setCaseSort(event.target.value as typeof caseSort)}><option value="id">Sort: case ID</option><option value="area">Sort: functional area</option><option value="scenario">Sort: scenario</option></select>
                 <Button type="button" variant="outline" onClick={() => selectVisiblePersonaCases(filteredPersonaCases.some((testCase) => !personaSet.has(testCase.id)))} disabled={isPending || filteredPersonaCases.length === 0}>
                   {filteredPersonaCases.length > 0 && filteredPersonaCases.every((testCase) => personaSet.has(testCase.id)) ? "Deselect all visible" : "Select all visible"} ({filteredPersonaCases.length})
                 </Button>
@@ -264,20 +321,27 @@ export function AssignmentManager({ overview }: { overview: AdminAssignmentOverv
           <CardDescription>Select a tester to review current assignments, apply persona defaults, and make individual overrides. Removing a case hides it from the tester workspace but preserves saved evaluations.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-5">
+          <div className="flex flex-col gap-3 lg:flex-row">
+            <div className="relative min-w-56 flex-1"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-foreground-muted" /><Input aria-label="Search testers" className="pl-9" placeholder="Search name, email, or persona" value={testerListSearch} onChange={(event) => setTesterListSearch(event.target.value)} /></div>
+            <select aria-label="Sort testers" className="h-10 rounded-md border border-border bg-background px-3 text-sm" value={testerSort} onChange={(event) => setTesterSort(event.target.value as typeof testerSort)}><option value="name">Sort: name</option><option value="persona">Sort: persona</option><option value="assignments">Sort: assigned cases</option><option value="progress">Sort: completion</option></select>
+            <Button type="button" variant="outline" onClick={() => selectVisibleTesters(filteredTesters.some((tester) => tester.isActive && !bulkTesterIds.includes(tester.id)))} disabled={isPending || !filteredTesters.some((tester) => tester.isActive)}>{filteredTesters.some((tester) => tester.isActive && !bulkTesterIds.includes(tester.id)) ? "Select visible" : "Clear visible"}</Button>
+            <Button type="button" onClick={applyDefaultsToSelectedTesters} disabled={isPending || bulkTesterIds.length === 0}>Apply persona defaults ({bulkTesterIds.length})</Button>
+          </div>
           <div className="overflow-auto rounded-md border border-border">
             <Table className="min-w-[850px]">
-              <TableHeader><TableRow><TableHead>Tester</TableHead><TableHead>Persona</TableHead><TableHead>Assigned cases</TableHead><TableHead>Evaluation progress</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
-              <TableBody>{overview.testers.map((tester) => {
+              <TableHeader><TableRow><TableHead>Select</TableHead><TableHead>Tester</TableHead><TableHead>Persona</TableHead><TableHead>Assigned cases</TableHead><TableHead>Evaluation progress</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
+              <TableBody>{filteredTesters.map((tester) => {
                 const personaId = testerPersonaIds[tester.id] ?? NONE;
                 const percent = testerSummary && tester.id === testerSummary.id && testerSummary.totalAssignments ? Math.round(testerSummary.completedAssignments / testerSummary.totalAssignments * 100) : tester.totalAssignments ? Math.round(tester.completedAssignments / tester.totalAssignments * 100) : 0;
                 return <TableRow key={tester.id} className={`${tester.isActive ? "cursor-pointer" : "opacity-60"} ${selectedTesterId === tester.id ? "bg-surface" : ""}`} onClick={() => selectTesterRow(tester)} aria-selected={selectedTesterId === tester.id}>
+                  <TableCell onClick={(event) => event.stopPropagation()}><input type="checkbox" aria-label={`Select ${tester.name} for bulk persona assignment`} checked={bulkTesterIds.includes(tester.id)} disabled={!tester.isActive || isPending} onChange={(event) => toggleBulkTester(tester.id, event.target.checked)} /></TableCell>
                   <TableCell className="font-medium"><span className="inline-flex items-center gap-2"><UserRound className="size-4 text-foreground-muted" />{tester.name}</span>{tester.email ? <div className="pl-6 text-xs text-foreground-muted">{tester.email}</div> : null}</TableCell>
                   <TableCell onClick={(event) => event.stopPropagation()}><Select value={personaId} onValueChange={(value) => changeTesterPersona(tester, value)} disabled={!tester.isActive || isPending || personas.length === 0}><SelectTrigger className="w-56"><SelectValue placeholder="Select required persona" /></SelectTrigger><SelectContent><SelectItem value={NONE}>Assign persona…</SelectItem>{personas.map((persona) => <SelectItem key={persona.id} value={persona.id}>{persona.name}</SelectItem>)}</SelectContent></Select></TableCell>
                   <TableCell><Badge variant="outline">{tester.assignedCaseCount}</Badge></TableCell>
                   <TableCell className="min-w-64"><div className="flex items-center gap-3"><Progress value={percent} className="max-w-48" /><span className="whitespace-nowrap text-xs text-foreground-muted">{tester.completedAssignments}/{tester.totalAssignments} vendor evaluations</span></div></TableCell>
                   <TableCell><Badge variant={tester.isActive ? "success" : "outline"}>{tester.isActive ? "Active" : "Inactive"}</Badge></TableCell>
                 </TableRow>;
-              })}</TableBody>
+              })}{filteredTesters.length === 0 ? <TableRow><TableCell colSpan={6} className="py-8 text-center text-sm text-foreground-muted">No testers match your search.</TableCell></TableRow> : null}</TableBody>
             </Table>
           </div>
 
@@ -293,6 +357,7 @@ export function AssignmentManager({ overview }: { overview: AdminAssignmentOverv
               <div className="flex flex-col gap-3 lg:flex-row">
                 <div className="relative flex-1"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-foreground-muted" /><Input className="pl-9" placeholder="Search test cases" value={testerSearch} onChange={(event) => setTesterSearch(event.target.value)} /></div>
                 <select aria-label="Filter tester cases by area" className="h-10 rounded-md border border-border bg-background px-3 text-sm" value={testerArea} onChange={(event) => setTesterArea(event.target.value)}><option value={ALL_AREAS}>All functional areas</option>{areas.map((area) => <option key={area} value={area}>{area}</option>)}</select>
+                <select aria-label="Sort test cases" className="h-10 rounded-md border border-border bg-background px-3 text-sm" value={caseSort} onChange={(event) => setCaseSort(event.target.value as typeof caseSort)}><option value="id">Sort: case ID</option><option value="area">Sort: functional area</option><option value="scenario">Sort: scenario</option></select>
                 <Button type="button" variant="outline" onClick={() => setVisibleCases(true)}>Select visible ({filteredTesterCases.length})</Button>
                 <Button type="button" variant="outline" onClick={() => setVisibleCases(false)}>Clear visible</Button>
               </div>
@@ -318,4 +383,10 @@ function sameIds(left: string[], right: string[]) {
   if (left.length !== right.length) return false;
   const ids = new Set(left);
   return right.every((id) => ids.has(id));
+}
+
+function compareCases(left: CaseRow, right: CaseRow, sort: "id" | "area" | "scenario") {
+  if (sort === "area") return left.functionalArea.localeCompare(right.functionalArea) || left.testCaseId.localeCompare(right.testCaseId);
+  if (sort === "scenario") return left.scenario.localeCompare(right.scenario) || left.testCaseId.localeCompare(right.testCaseId);
+  return left.testCaseId.localeCompare(right.testCaseId);
 }

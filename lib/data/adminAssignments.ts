@@ -220,3 +220,92 @@ export async function applyPersonaDefaults(testerId: string) {
   if (ids.length === 0) throw new AppError("VALIDATION", "This persona has no default test cases yet.");
   return setTesterCases(testerId, ids, true);
 }
+
+export async function applyPersonaDefaultsToTesters(testerIds: string[]) {
+  const uniqueTesterIds = [...new Set(testerIds)];
+  if (uniqueTesterIds.length === 0) return { testersApplied: 0, testersSkipped: 0, casesAdded: 0 };
+
+  return withTransaction(async (client) => {
+    const { rows: testers } = await client.query<{ id: string; persona_id: string | null }>(
+      "select id, persona_id from testers where id = any($1::uuid[]) and is_active for update",
+      [uniqueTesterIds],
+    );
+    if (testers.length !== uniqueTesterIds.length) {
+      throw new AppError("VALIDATION", "One or more selected testers are no longer active.");
+    }
+
+    const personaIds = [...new Set(testers.map((tester) => tester.persona_id).filter((id): id is string => Boolean(id)))];
+    const [{ rows: vendors }, { rows: defaults }] = await Promise.all([
+      client.query<{ id: string }>("select id from vendors"),
+      personaIds.length
+        ? client.query<{ persona_id: string; test_case_id: string }>(
+          `select ptc.persona_id, ptc.test_case_id
+           from persona_test_cases ptc join test_cases tc on tc.id = ptc.test_case_id
+           where ptc.persona_id = any($1::uuid[]) and tc.is_active`,
+          [personaIds],
+        )
+        : Promise.resolve({ rows: [] as { persona_id: string; test_case_id: string }[] }),
+    ]);
+    if (vendors.length === 0) throw new AppError("VALIDATION", "Unable to load vendors for assignments.");
+
+    const casesByPersona = new Map<string, string[]>();
+    for (const row of defaults) {
+      const ids = casesByPersona.get(row.persona_id) ?? [];
+      ids.push(row.test_case_id);
+      casesByPersona.set(row.persona_id, ids);
+    }
+    const casesByTester = testers.map((tester) => ({
+      testerId: tester.id,
+      caseIds: tester.persona_id ? casesByPersona.get(tester.persona_id) ?? [] : [],
+    }));
+    const applied = casesByTester.filter((entry) => entry.caseIds.length > 0);
+    if (applied.length === 0) {
+      return { testersApplied: 0, testersSkipped: uniqueTesterIds.length, casesAdded: 0 };
+    }
+
+    const allCaseIds = [...new Set(applied.flatMap((entry) => entry.caseIds))];
+    const { rows: existing } = await client.query<{
+      id: string; tester_id: string; test_case_id: string; vendor_id: string; is_active: boolean;
+    }>(
+      `select id, tester_id, test_case_id, vendor_id, is_active from assignments
+       where tester_id = any($1::uuid[]) and test_case_id = any($2::uuid[]) for update`,
+      [applied.map((entry) => entry.testerId), allCaseIds],
+    );
+
+    const activateIds: string[] = [];
+    const insertPairs: { tester_id: string; test_case_id: string; vendor_id: string }[] = [];
+    const changedCasePairs = new Set<string>();
+    for (const entry of applied) {
+      const testerAssignments = existing.filter((row) => row.tester_id === entry.testerId);
+      const plan = planAssignmentChanges(testerAssignments, entry.caseIds, vendors.map((vendor) => vendor.id), true);
+      activateIds.push(...plan.reactivateIds);
+      insertPairs.push(...plan.insertPairs.map((pair) => ({ tester_id: entry.testerId, ...pair })));
+      for (const row of testerAssignments) {
+        if (plan.reactivateIds.includes(row.id)) changedCasePairs.add(`${entry.testerId}:${row.test_case_id}`);
+      }
+      for (const pair of plan.insertPairs) changedCasePairs.add(`${entry.testerId}:${pair.test_case_id}`);
+    }
+
+    if (activateIds.length) {
+      await client.query("update assignments set is_active = true where id = any($1::uuid[])", [activateIds]);
+    }
+    const insertedIds: string[] = [];
+    if (insertPairs.length) {
+      const { rows } = await client.query<{ id: string }>(
+        `insert into assignments (tester_id, test_case_id, vendor_id, is_active)
+         select pairs.tester_id, pairs.test_case_id, pairs.vendor_id, true
+         from unnest($1::uuid[], $2::uuid[], $3::uuid[]) as pairs(tester_id, test_case_id, vendor_id)
+         on conflict (tester_id, test_case_id, vendor_id) do nothing returning id`,
+        [insertPairs.map((pair) => pair.tester_id), insertPairs.map((pair) => pair.test_case_id), insertPairs.map((pair) => pair.vendor_id)],
+      );
+      insertedIds.push(...rows.map((row) => row.id));
+    }
+
+    await ensureResultsForAssignments(client, [...existing.map((row) => row.id), ...insertedIds]);
+    return {
+      testersApplied: applied.length,
+      testersSkipped: uniqueTesterIds.length - applied.length,
+      casesAdded: changedCasePairs.size,
+    };
+  });
+}

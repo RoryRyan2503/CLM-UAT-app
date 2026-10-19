@@ -140,9 +140,10 @@ async function main() {
       }
       for (const setting of settingsRows) {
         await client.query(
-          `insert into app_settings (id, evidence_enabled, updated_at) values ($1, $2, $3)
-           on conflict (id) do update set evidence_enabled = excluded.evidence_enabled, updated_at = excluded.updated_at`,
-          [setting.id, setting.evidence_enabled, setting.updated_at],
+          `insert into app_settings (id, evidence_enabled, evidence_mode, updated_at) values ($1, $2, $3, $4)
+           on conflict (id) do update set evidence_enabled = excluded.evidence_enabled,
+             evidence_mode = excluded.evidence_mode, updated_at = excluded.updated_at`,
+          [setting.id, setting.evidence_enabled, setting.evidence_enabled ? "upload" : "disabled", setting.updated_at],
         );
       }
       await client.query(

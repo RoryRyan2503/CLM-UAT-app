@@ -4,17 +4,20 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { AppError, runAction } from "@/lib/actionResult";
 import { requireAdminSession } from "@/lib/auth/adminSession";
-import { setEvidenceEnabled } from "@/lib/data/appSettings";
+import { setEvidenceMode, type EvidenceMode } from "@/lib/data/appSettings";
 
-const evidenceSettingSchema = z.object({ enabled: z.boolean() });
+const evidenceSettingSchema = z.object({ mode: z.enum(["disabled", "sharepoint", "upload"]) });
 
-export async function setEvidenceEnabledAction(input: unknown) {
+export async function setEvidenceModeAction(input: unknown) {
   return runAction(async () => {
     await requireAdminSession();
     const parsed = evidenceSettingSchema.safeParse(input);
     if (!parsed.success) throw new AppError("VALIDATION", "Invalid evidence setting.");
-    await setEvidenceEnabled(parsed.data.enabled);
+    const mode: EvidenceMode = parsed.data.mode;
+    await setEvidenceMode(mode);
     revalidatePath("/admin/settings");
-    return parsed.data.enabled;
+    revalidatePath("/test", "page");
+    revalidatePath("/assignments-v2");
+    return mode;
   });
 }

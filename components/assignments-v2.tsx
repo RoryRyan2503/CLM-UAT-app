@@ -19,7 +19,7 @@ import type { TestCaseWorkflow } from "@/lib/data/testCaseWorkflow";
 
 const ALL = "__all__";
 
-export function AssignmentsV2({ assignments, testerId, evidenceEnabled }: { assignments: AssignmentListItem[]; testerId: string; evidenceEnabled: boolean }) {
+export function AssignmentsV2({ assignments, testerId, evidenceMode }: { assignments: AssignmentListItem[]; testerId: string; evidenceMode: "disabled" | "sharepoint" | "upload" }) {
   const router = useRouter();
   const [vendor, setVendor] = useState<VendorSlug>("ironclad");
   const [search, setSearch] = useState("");
@@ -115,7 +115,7 @@ export function AssignmentsV2({ assignments, testerId, evidenceEnabled }: { assi
             {filtered.map((item, index) => {
               const status = vendor === "ironclad" ? item.ironcladStatus : item.sirionStatus;
               const isOpen = expandedId === item.testCaseUuid;
-              return <FragmentRow key={item.testCaseUuid} item={item} vendor={vendor} status={status} isOpen={isOpen} loading={loadingId === item.testCaseUuid || (isPending && loadingId === item.testCaseUuid)} workflow={isOpen ? workflow : null} testerId={testerId} evidenceEnabled={evidenceEnabled} onToggle={() => expand(item)} onPrevious={() => navigateToOffset(-1)} onNext={() => navigateToOffset(1)} onSaved={() => refreshExpandedWorkflow(item.testCaseUuid)} canGoPrevious={index > 0} canGoNext={index < filtered.length - 1} position={index + 1} total={filtered.length} />;
+              return <FragmentRow key={item.testCaseUuid} item={item} vendor={vendor} status={status} isOpen={isOpen} loading={loadingId === item.testCaseUuid || (isPending && loadingId === item.testCaseUuid)} workflow={isOpen ? workflow : null} testerId={testerId} evidenceMode={evidenceMode} onToggle={() => expand(item)} onPrevious={() => navigateToOffset(-1)} onNext={() => navigateToOffset(1)} onSaved={() => refreshExpandedWorkflow(item.testCaseUuid)} canGoPrevious={index > 0} canGoNext={index < filtered.length - 1} position={index + 1} total={filtered.length} />;
             })}
             {filtered.length === 0 ? <TableRow><TableCell colSpan={6} className="py-12 text-center text-sm text-foreground-muted">No assigned tests match these filters.</TableCell></TableRow> : null}
           </TableBody>
@@ -127,8 +127,8 @@ export function AssignmentsV2({ assignments, testerId, evidenceEnabled }: { assi
   );
 }
 
-function FragmentRow({ item, vendor, status, isOpen, loading, workflow, testerId, evidenceEnabled, onToggle, onPrevious, onNext, onSaved, canGoPrevious, canGoNext, position, total }: {
-  item: AssignmentListItem; vendor: VendorSlug; status: string; isOpen: boolean; loading: boolean; workflow: TestCaseWorkflow | null; testerId: string; evidenceEnabled: boolean;
+function FragmentRow({ item, vendor, status, isOpen, loading, workflow, testerId, evidenceMode, onToggle, onPrevious, onNext, onSaved, canGoPrevious, canGoNext, position, total }: {
+  item: AssignmentListItem; vendor: VendorSlug; status: string; isOpen: boolean; loading: boolean; workflow: TestCaseWorkflow | null; testerId: string; evidenceMode: "disabled" | "sharepoint" | "upload";
   onToggle: () => void; onPrevious: () => void; onNext: () => void; onSaved: () => void; canGoPrevious: boolean; canGoNext: boolean; position: number; total: number;
 }) {
   const ironclad = workflow?.ironclad ?? null;
@@ -167,10 +167,10 @@ function FragmentRow({ item, vendor, status, isOpen, loading, workflow, testerId
             <details className="rounded-md border border-border bg-background"><summary className="cursor-pointer px-4 py-3 text-sm font-medium">Common test definition</summary><div className="grid gap-4 border-t border-border p-4 text-sm"><Definition label="Use Case" value={workflow.testCase.use_case} /><Definition label="What You Should See" value={workflow.testCase.expected_result} /><Definition label="Required Evidence" value={workflow.testCase.required_evidence} /></div></details>
             <details className="rounded-md border border-border bg-background"><summary className="cursor-pointer px-4 py-3 text-sm font-medium">{vendor === "ironclad" ? "Ironclad" : "Sirion"} test guidance</summary><div className="grid gap-4 border-t border-border p-4 text-sm"><Definition label="Feature" value={vendor === "ironclad" ? workflow.testCase.ironclad_feature : workflow.testCase.sirion_feature} /><Definition label="Availability" value={vendor === "ironclad" ? workflow.testCase.ironclad_availability : workflow.testCase.sirion_availability} /><Definition label="Steps" value={vendor === "ironclad" ? workflow.testCase.ironclad_steps : workflow.testCase.sirion_steps} /></div></details>
               <div hidden={vendor !== "ironclad"}>
-                <TestResultForm key={ironclad.result.id} vendorName={ironclad.vendorName} assignmentId={ironclad.assignment.id} vendorId={ironclad.assignment.vendor_id} result={ironclad.result} evidence={ironclad.evidence} defect={ironclad.defect} evidenceEnabled={evidenceEnabled} onSaved={onSaved} />
+                <TestResultForm key={ironclad.result.id} vendorName={ironclad.vendorName} assignmentId={ironclad.assignment.id} vendorId={ironclad.assignment.vendor_id} result={ironclad.result} evidence={ironclad.evidence} defect={ironclad.defect} evidenceMode={evidenceMode} onSaved={onSaved} />
               </div>
               <div hidden={vendor !== "sirion"}>
-                <TestResultForm key={sirion.result.id} vendorName={sirion.vendorName} assignmentId={sirion.assignment.id} vendorId={sirion.assignment.vendor_id} result={sirion.result} evidence={sirion.evidence} defect={sirion.defect} evidenceEnabled={evidenceEnabled} onSaved={onSaved} />
+                <TestResultForm key={sirion.result.id} vendorName={sirion.vendorName} assignmentId={sirion.assignment.id} vendorId={sirion.assignment.vendor_id} result={sirion.result} evidence={sirion.evidence} defect={sirion.defect} evidenceMode={evidenceMode} onSaved={onSaved} />
               </div>
             {bothComplete ? <ComparisonForm testerId={testerId} testCaseId={workflow.testCase.id} ironclad={workflow.ironclad} sirion={workflow.sirion} comparison={workflow.comparison} /> : <div className="flex items-center gap-2 text-xs text-foreground-muted"><AlertCircle className="size-4" />Complete both vendors to record a comparison and preference.</div>}
           </div>

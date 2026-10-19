@@ -2,18 +2,20 @@ import "server-only";
 import { AppError } from "@/lib/actionResult";
 import { query } from "@/lib/db/pool";
 
-export async function getEvidenceEnabled(): Promise<boolean> {
-  const { rows } = await query<{ evidence_enabled: boolean }>(
-    "select evidence_enabled from app_settings where id = 1",
+export type EvidenceMode = "disabled" | "sharepoint" | "upload";
+
+export async function getEvidenceMode(): Promise<EvidenceMode> {
+  const { rows } = await query<{ evidence_mode: EvidenceMode }>(
+    "select evidence_mode from app_settings where id = 1",
   );
   if (!rows[0]) throw new AppError("VALIDATION", "Unable to load application settings.");
-  return rows[0].evidence_enabled;
+  return rows[0].evidence_mode;
 }
 
-export async function setEvidenceEnabled(enabled: boolean): Promise<void> {
+export async function setEvidenceMode(mode: EvidenceMode): Promise<void> {
   const { rowCount } = await query(
-    "update app_settings set evidence_enabled = $1, updated_at = now() where id = 1",
-    [enabled],
+    "update app_settings set evidence_mode = $1, evidence_enabled = ($1 <> 'disabled'), updated_at = now() where id = 1",
+    [mode],
   );
   if (!rowCount) throw new AppError("VALIDATION", "Unable to save evidence settings.");
 }
