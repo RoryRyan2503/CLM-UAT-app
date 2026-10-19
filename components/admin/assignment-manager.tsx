@@ -40,6 +40,7 @@ export function AssignmentManager({ overview }: { overview: AdminAssignmentOverv
   const [testerCaseIds, setTesterCaseIds] = useState<Record<string, string[]>>(overview.testerCaseIds);
   const [selectedTesterId, setSelectedTesterId] = useState(overview.testers.find((tester) => tester.isActive)?.id ?? "");
   const [selectedPersonaId, setSelectedPersonaId] = useState(overview.personas[0]?.id ?? "");
+  const [sourcePersonaIds, setSourcePersonaIds] = useState<string[]>([]);
   const [newPersonaName, setNewPersonaName] = useState("");
   const [personaArea, setPersonaArea] = useState(ALL_AREAS);
   const [testerArea, setTesterArea] = useState(ALL_AREAS);
@@ -128,6 +129,22 @@ export function AssignmentManager({ overview }: { overview: AdminAssignmentOverv
       }
       return { ...current, [selectedPersonaId]: [...next] };
     });
+  }
+
+  function toggleSourcePersona(personaId: string, selected: boolean) {
+    setSourcePersonaIds((current) => selected
+      ? [...new Set([...current, personaId])]
+      : current.filter((id) => id !== personaId));
+  }
+
+  function combinePersonaDefaults() {
+    if (!selectedPersonaId || sourcePersonaIds.length === 0) return;
+    const combinedCaseIds = [...new Set(sourcePersonaIds.flatMap((personaId) => personaCaseIds[personaId] ?? []))];
+    setDraftPersonaCaseIds((current) => ({
+      ...current,
+      [selectedPersonaId]: [...new Set([...(current[selectedPersonaId] ?? []), ...combinedCaseIds])],
+    }));
+    toast.success(`${combinedCaseIds.length} cases from ${sourcePersonaIds.length} personas added to the draft. Save defaults to keep the combination.`);
   }
 
   function savePersonaDefaults() {
@@ -291,6 +308,29 @@ export function AssignmentManager({ overview }: { overview: AdminAssignmentOverv
           </div>
           {selectedPersonaId ? (
             <>
+              <section className="flex flex-col gap-3 rounded-md border border-border p-4" aria-labelledby="combine-persona-defaults-heading">
+                <div>
+                  <h3 id="combine-persona-defaults-heading" className="text-sm font-semibold">Combine persona defaults</h3>
+                  <p className="mt-1 text-sm text-foreground-muted">Add the selected personas’ cases to {personas.find((persona) => persona.id === selectedPersonaId)?.name ?? "this persona"}. Existing draft selections are kept.</p>
+                </div>
+                <div className="grid max-h-36 gap-2 overflow-auto sm:grid-cols-2 lg:grid-cols-3">
+                  {personas.filter((persona) => persona.id !== selectedPersonaId).map((persona) => (
+                    <label key={persona.id} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={sourcePersonaIds.includes(persona.id)}
+                        disabled={isPending}
+                        onChange={(event) => toggleSourcePersona(persona.id, event.currentTarget.checked)}
+                      />
+                      <span>{persona.name}</span>
+                      <span className="text-xs text-foreground-muted">({(personaCaseIds[persona.id] ?? []).length})</span>
+                    </label>
+                  ))}
+                </div>
+                <Button type="button" variant="outline" className="w-fit" onClick={combinePersonaDefaults} disabled={isPending || sourcePersonaIds.length === 0}>
+                  Add selected defaults ({sourcePersonaIds.length})
+                </Button>
+              </section>
               <div className="flex flex-col gap-3 lg:flex-row">
                 <div className="relative flex-1"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-foreground-muted" /><Input className="pl-9" placeholder="Search test cases" value={personaSearch} onChange={(event) => setPersonaSearch(event.target.value)} /></div>
                 <select aria-label="Filter persona cases by area" className="h-10 rounded-md border border-border bg-background px-3 text-sm" value={personaArea} onChange={(event) => setPersonaArea(event.target.value)}><option value={ALL_AREAS}>All functional areas</option>{areas.map((area) => <option key={area} value={area}>{area}</option>)}</select>
