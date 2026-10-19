@@ -54,8 +54,8 @@ export function TestResultForm({
 }) {
   // Keyed by result.id at the call site (see test case page), so a new assignment/result
   // remounts this component with fresh initial state instead of syncing via an effect.
-  const [form, setForm] = useState(rowToForm(result));
-  const [version, setVersion] = useState(result.version);
+  const initialForm = rowToForm(result);
+  const [form, setForm] = useState(initialForm);
   const [evidenceList, setEvidenceList] = useState(evidence);
   const [linkedDefect, setLinkedDefect] = useState(defect);
   const [showGradeDefinitions, setShowGradeDefinitions] = useState(false);
@@ -64,18 +64,29 @@ export function TestResultForm({
   const [isSaving, setIsSaving] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const formRef = useRef(initialForm);
+  const versionRef = useRef(result.version);
+  const revisionRef = useRef(0);
+  const saveInFlightRef = useRef(false);
+  const saveQueuedRef = useRef(false);
 
   useUnsavedChangesWarning(isDirty);
 
   function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
-    setForm((prev) => ({ ...prev, [key]: value }));
+    const nextForm = { ...formRef.current, [key]: value };
+    formRef.current = nextForm;
+    revisionRef.current += 1;
+    setForm(nextForm);
     setIsDirty(true);
-    if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
-    autosaveTimer.current = setTimeout(() => void handleSaveDraft({ ...form, [key]: value }), 1500);
+    scheduleAutosave();
   }
 
-  function buildInput(overrides?: Partial<typeof form>, versionOverride = version): TestResultDraftInput {
-    const merged = { ...form, ...overrides };
+  function scheduleAutosave(delay = 1500) {
+    if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+    autosaveTimer.current = setTimeout(() => void handleSaveDraft(), delay);
+  }
+
+  function buildInput(merged = formRef.current, versionOverride = versionRef.current): TestResultDraftInput {
     return {
       assignmentId,
       version: versionOverride,
@@ -99,21 +110,42 @@ export function TestResultForm({
     };
   }
 
-  async function handleSaveDraft(overrideForm?: typeof form, versionOverride = version) {
-    setIsSaving(true);
-    const input = buildInput(overrideForm, versionOverride);
-    const res = await saveDraftAction(input);
-    setIsSaving(false);
-    if (!res.ok) {
-      if (res.code === "CONFLICT") toast.error(res.error);
+  async function handleSaveDraft() {
+    if (saveInFlightRef.current) {
+      saveQueuedRef.current = true;
       return;
     }
-    setVersion(res.data.version);
-    setIsDirty(false);
-    onSaved?.();
+    saveInFlightRef.current = true;
+    setIsSaving(true);
+    const revision = revisionRef.current;
+    let saveAgain = false;
+    try {
+      const res = await saveDraftAction(buildInput());
+      if (!res.ok) {
+        saveQueuedRef.current = false;
+        if (res.code === "CONFLICT") toast.error(res.error);
+        return;
+      }
+      versionRef.current = Math.max(versionRef.current, res.data.version);
+      if (revisionRef.current === revision) setIsDirty(false);
+      else saveAgain = true;
+      onSaved?.();
+    } finally {
+      saveInFlightRef.current = false;
+      setIsSaving(false);
+      if (saveAgain || saveQueuedRef.current) {
+        saveQueuedRef.current = false;
+        scheduleAutosave(0);
+      }
+    }
   }
 
   async function handleSubmit() {
+    if (saveInFlightRef.current) {
+      toast.error("Your draft is still saving. Please submit again in a moment.");
+      return;
+    }
+    if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     const input = buildInput();
     const clientErrors = getConditionalRequirementErrors(input);
     setErrors(clientErrors);
@@ -130,7 +162,7 @@ export function TestResultForm({
       toast.error(res.error);
       return;
     }
-    setVersion(res.data.version);
+    versionRef.current = Math.max(versionRef.current, res.data.version);
     setIsDirty(false);
     onSaved?.();
     toast.success(`${vendorName} result submitted.`);
@@ -165,19 +197,16 @@ export function TestResultForm({
             <YesNoRadio
               value={form.improvementNeeded}
               onChange={(value) => {
-                setForm((previous) => ({
-                  ...previous,
-                  improvementNeeded: value,
-                  improvementDescription: value ? previous.improvementDescription : null,
-                }));
-                setIsDirty(true);
-                if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
                 const nextForm = {
-                  ...form,
+                  ...formRef.current,
                   improvementNeeded: value,
-                  improvementDescription: value ? form.improvementDescription : null,
+                  improvementDescription: value ? formRef.current.improvementDescription : null,
                 };
-                autosaveTimer.current = setTimeout(() => void handleSaveDraft(nextForm), 1500);
+                formRef.current = nextForm;
+                revisionRef.current += 1;
+                setForm(nextForm);
+                setIsDirty(true);
+                scheduleAutosave();
               }}
             />
           </QuestionField>
@@ -317,11 +346,13 @@ export function TestResultForm({
             onSaved={(savedDefect, resultVersion) => {
               if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
               setLinkedDefect(savedDefect);
-              const nextForm = { ...form, defectId: savedDefect.id };
+              const nextForm = { ...formRef.current, defectId: savedDefect.id };
+              formRef.current = nextForm;
+              revisionRef.current += 1;
               setForm(nextForm);
-              setVersion(resultVersion);
+              versionRef.current = Math.max(versionRef.current, resultVersion);
               setIsDirty(true);
-              autosaveTimer.current = setTimeout(() => void handleSaveDraft(nextForm, resultVersion), 1500);
+              scheduleAutosave();
             }}
           />
         </Field>
@@ -367,10 +398,10 @@ export function TestResultForm({
         </div>
       </CardContent>
       <CardFooter className="justify-end gap-2">
-        <Button variant="outline" onClick={() => handleSaveDraft()} disabled={isSaving}>
+        <Button variant="outline" onClick={() => void handleSaveDraft()} disabled={isSaving}>
           Save draft
         </Button>
-        <Button onClick={handleSubmit} disabled={isSubmitting}>
+        <Button onClick={handleSubmit} disabled={isSubmitting || isSaving}>
           {isSubmitting ? "Submitting…" : `Submit ${vendorName} result`}
         </Button>
       </CardFooter>
