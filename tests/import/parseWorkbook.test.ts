@@ -15,6 +15,12 @@ const SAMPLE_CSV = [
   ",AI,,Missing ID row.,1. Step.,Pass if ignored.,Evidence,",
 ].join("\n");
 
+const CATALOG_CSV = [
+  "Test case ID,Functional area,Honeywell scenario,Persona,Use case(s),What you should see,Sirion – steps,Sirion – feature,Sirion – availability,Ironclad – steps,Ironclad – feature,Ironclad – availability, Sirion – your result",
+  'AI-01,AI,Clause review,Legal,Review a clause,Relevant clauses are found,"1. Search",Clause analysis,Available – Configured,"1. Open workflow",Workflow builder,Available – NOT Configured,Pass',
+  'AI-02,AI,Contract intake,Procurement,Create a contract,Contract is saved,"1. Create",Intake,Not an available feature in the CLM,"1. Submit",Intake form,,Fail',
+].join("\n");
+
 describe("parseTestCaseWorkbook", () => {
   it("locates the header row after leading metadata rows and maps the seven canonical fields", () => {
     const preview = parseTestCaseWorkbook(Buffer.from(SAMPLE_CSV, "utf-8"), "sample.csv");
@@ -38,5 +44,24 @@ describe("parseTestCaseWorkbook", () => {
   it("reports a row error for a missing Test Case ID instead of silently skipping it", () => {
     const preview = parseTestCaseWorkbook(Buffer.from(SAMPLE_CSV, "utf-8"), "sample.csv");
     expect(preview.rowErrors.length).toBeGreaterThan(0);
+  });
+
+  it("maps the revised catalog columns and canonicalizes vendor availability without importing evaluation columns", () => {
+    const preview = parseTestCaseWorkbook(Buffer.from(CATALOG_CSV, "utf-8"), "catalog.csv");
+    expect(preview.fullCatalog).toBe(true);
+    expect(preview.validRows).toHaveLength(2);
+    expect(preview.validRows[0]).toMatchObject({
+      testCaseId: "AI-01",
+      useCase: "Review a clause",
+      sirionAvailability: "Available and Configured",
+      ironcladAvailability: "Not Configured",
+    });
+    expect(preview.validRows[1].ironcladAvailability).toBe("Not Specified");
+    expect(preview.rowErrors).toHaveLength(0);
+  });
+
+  it("marks legacy imports as partial so they cannot archive omitted cases", () => {
+    const preview = parseTestCaseWorkbook(Buffer.from(SAMPLE_CSV, "utf-8"), "legacy.csv");
+    expect(preview.fullCatalog).toBe(false);
   });
 });

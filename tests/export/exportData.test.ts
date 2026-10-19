@@ -14,8 +14,10 @@ function record(vendor: string, tester: string, testCase: string): ExportRecord 
   const assignmentId = `${vendor}-${tester}-${testCase}`;
   return {
     testCase: { id: testCase, test_case_id: testCase, functional_area: "Intake", persona: "Legal",
-      scenario: "Create", suggested_steps: "Save", expected_result: "Created", required_evidence: "Screenshot",
-      source_row_number: null, created_at: createdAt, updated_at: createdAt },
+      scenario: "Create", use_case: "Create an agreement", suggested_steps: "Save", sirion_steps: "Save in Sirion",
+      sirion_feature: "Intake", sirion_availability: "Not Specified", ironclad_steps: "Save in Ironclad",
+      ironclad_feature: "Workflow", ironclad_availability: "Available and Configured", expected_result: "Created",
+      required_evidence: "Screenshot", source_row_number: null, is_active: true, created_at: createdAt, updated_at: createdAt },
     tester: { id: tester, name: tester, email: null, department: null, persona: "Procurement", persona_id: null,
       is_active: true, created_at: createdAt, updated_at: createdAt },
     vendor: { id: vendor, name: vendor, slug: vendor.toLowerCase(), created_at: createdAt },

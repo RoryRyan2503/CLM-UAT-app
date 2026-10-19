@@ -6,8 +6,8 @@ export default function AdminImportPage() {
       <div>
         <h1 className="text-xl font-semibold">Import test cases</h1>
         <p className="text-sm text-foreground-muted">
-          Upload the source workbook (.xlsx or .csv). Only Test Case ID, Functional Area, Persona, Scenario,
-          Suggested Steps, Expected Result, and Required Evidence are imported; the original file is never modified.
+          Upload the revised catalog workbook or CSV to replace the active test-case definitions. Existing evaluations are retained;
+          definitions missing from a full catalog are archived. Legacy test-case imports update matching IDs without archiving anything.
         </p>
       </div>
       <ImportWorkbook />

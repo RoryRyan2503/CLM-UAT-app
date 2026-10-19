@@ -17,7 +17,7 @@ export interface AdminAssignmentOverview {
     totalAssignments: number;
   }[];
   personas: { id: string; name: string }[];
-  testCases: { id: string; testCaseId: string; functionalArea: string; scenario: string }[];
+  testCases: { id: string; testCaseId: string; functionalArea: string; scenario: string; isActive: boolean }[];
   personaCaseIds: Record<string, string[]>;
   testerCaseIds: Record<string, string[]>;
 }
@@ -28,8 +28,8 @@ export async function getAdminAssignmentOverview(): Promise<AdminAssignmentOverv
       "select id, name, email, persona, persona_id, is_active from testers order by name",
     ),
     query<{ id: string; name: string }>("select id, name from personas order by name"),
-    query<{ id: string; test_case_id: string; functional_area: string; scenario: string }>(
-      "select id, test_case_id, functional_area, scenario from test_cases order by test_case_id",
+    query<{ id: string; test_case_id: string; functional_area: string; scenario: string; is_active: boolean }>(
+      "select id, test_case_id, functional_area, scenario, is_active from test_cases order by test_case_id",
     ),
     query<{ persona_id: string; test_case_id: string }>("select persona_id, test_case_id from persona_test_cases"),
     query<{ id: string; tester_id: string; test_case_id: string; is_active: boolean; status: string | null }>(
@@ -81,6 +81,7 @@ export async function getAdminAssignmentOverview(): Promise<AdminAssignmentOverv
       testCaseId: testCase.test_case_id,
       functionalArea: testCase.functional_area,
       scenario: testCase.scenario,
+      isActive: testCase.is_active,
     })),
     personaCaseIds,
     testerCaseIds,
@@ -123,6 +124,8 @@ export async function createPersona(name: string) {
 
 export async function setPersonaTestCase(personaId: string, testCaseId: string, included: boolean) {
   if (included) {
+    const { rows } = await query<{ id: string }>("select id from test_cases where id = $1 and is_active", [testCaseId]);
+    if (!rows[0]) throw new AppError("VALIDATION", "Archived test cases cannot be added to persona defaults.");
     await query(
       "insert into persona_test_cases (persona_id, test_case_id) values ($1, $2) on conflict do nothing",
       [personaId, testCaseId],
@@ -136,7 +139,7 @@ export async function setPersonaTestCases(personaId: string, testCaseIds: string
   const ids = [...new Set(testCaseIds)];
   if (ids.length === 0) return { casesChanged: 0 };
   const { rows: validCases } = await query<{ id: string }>(
-    "select id from test_cases where id = any($1::uuid[])",
+    `select id from test_cases where id = any($1::uuid[]) ${included ? "and is_active" : ""}`,
     [ids],
   );
   if (validCases.length !== ids.length) {
@@ -165,11 +168,14 @@ export async function setTesterCases(testerId: string, testCaseIds: string[], as
     if (!testers[0]?.is_active) throw new AppError("NOT_FOUND", "Active tester not found.");
     const [{ rows: vendors }, { rows: cases }] = await Promise.all([
       client.query<{ id: string }>("select id from vendors"),
-      client.query<{ id: string }>("select id from test_cases where id = any($1::uuid[])", [uniqueCaseIds]),
+      client.query<{ id: string; is_active: boolean }>("select id, is_active from test_cases where id = any($1::uuid[])", [uniqueCaseIds]),
     ]);
     if (!vendors.length) throw new AppError("VALIDATION", "Unable to load cases or vendors.");
     const validCaseIds = cases.map((testCase) => testCase.id);
     if (validCaseIds.length !== uniqueCaseIds.length) throw new AppError("VALIDATION", "One or more test cases are invalid.");
+    if (assigned && cases.some((testCase) => !testCase.is_active)) {
+      throw new AppError("VALIDATION", "Archived test cases cannot be newly assigned.");
+    }
     const { rows: existing } = await client.query<{ id: string; test_case_id: string; vendor_id: string; is_active: boolean }>(
       "select id, test_case_id, vendor_id, is_active from assignments where tester_id = $1 and test_case_id = any($2::uuid[]) for update",
       [testerId, validCaseIds],

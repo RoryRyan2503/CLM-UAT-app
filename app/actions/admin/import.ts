@@ -32,8 +32,11 @@ export async function commitImportAction(formData: FormData) {
     if (preview.rowErrors.length > 0 || preview.duplicateTestCaseIds.length > 0) {
       throw new AppError("VALIDATION", "Resolve row errors and duplicate IDs before importing.");
     }
+    if (preview.fullCatalog && preview.validRows.length === 0) {
+      throw new AppError("VALIDATION", "A full catalog import must contain at least one valid test case.");
+    }
 
-    const result = await commitTestCaseImport(preview.validRows, file.name, admin.id);
+    const result = await commitTestCaseImport(preview.validRows, file.name, admin.id, preview.fullCatalog);
     revalidatePath("/admin/import");
     revalidatePath("/admin/assignments");
     return result;

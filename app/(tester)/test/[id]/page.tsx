@@ -64,8 +64,8 @@ export default async function TestCasePage({ params }: { params: Promise<{ id: s
           <CardTitle className="text-base">Test definition</CardTitle>
         </CardHeader>
         <CardContent className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
-          <ReadOnlyField label="Suggested Steps" value={workflow.testCase.suggested_steps} />
-          <ReadOnlyField label="Expected Result" value={workflow.testCase.expected_result} />
+          <ReadOnlyField label="Use Case" value={workflow.testCase.use_case} />
+          <ReadOnlyField label="What You Should See" value={workflow.testCase.expected_result} />
           <ReadOnlyField label="Required Evidence" value={workflow.testCase.required_evidence} />
         </CardContent>
       </Card>
@@ -79,6 +79,7 @@ export default async function TestCasePage({ params }: { params: Promise<{ id: s
           </TabsTrigger>
         </TabsList>
         <TabsContent value="ironclad">
+          <VendorDefinition feature={workflow.testCase.ironclad_feature} steps={workflow.testCase.ironclad_steps} availability={workflow.testCase.ironclad_availability} />
           <TestResultForm
             key={workflow.ironclad.result.id}
             vendorName="Ironclad"
@@ -91,6 +92,7 @@ export default async function TestCasePage({ params }: { params: Promise<{ id: s
           />
         </TabsContent>
         <TabsContent value="sirion">
+          <VendorDefinition feature={workflow.testCase.sirion_feature} steps={workflow.testCase.sirion_steps} availability={workflow.testCase.sirion_availability} />
           <TestResultForm
             key={workflow.sirion.result.id}
             vendorName="Sirion"
@@ -128,5 +130,18 @@ function ReadOnlyField({ label, value }: { label: string; value: string }) {
       <div className="text-xs font-semibold uppercase tracking-wide text-foreground-muted">{label}</div>
       <p className="mt-1 whitespace-pre-line text-foreground">{value}</p>
     </div>
+  );
+}
+
+function VendorDefinition({ feature, steps, availability }: { feature: string; steps: string; availability: string }) {
+  return (
+    <Card className="mb-4">
+      <CardHeader><CardTitle className="text-base">Vendor test guidance</CardTitle></CardHeader>
+      <CardContent className="grid gap-4 text-sm sm:grid-cols-2">
+        <ReadOnlyField label="Feature" value={feature} />
+        <ReadOnlyField label="Availability" value={availability} />
+        <ReadOnlyField label="Steps" value={steps} />
+      </CardContent>
+    </Card>
   );
 }

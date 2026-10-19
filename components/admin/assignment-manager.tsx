@@ -50,16 +50,18 @@ export function AssignmentManager({ overview }: { overview: AdminAssignmentOverv
   const areas = useMemo(() => Array.from(new Set(overview.testCases.map((testCase) => testCase.functionalArea))).sort(), [overview.testCases]);
   const activeTesters = overview.testers.filter((tester) => tester.isActive);
   const selectedTester = activeTesters.find((tester) => tester.id === selectedTesterId) ?? null;
+  const assignedSet = new Set(draftAssignedIds);
 
   const filteredPersonaCases = overview.testCases.filter((testCase) =>
+    testCase.isActive &&
     (personaArea === ALL_AREAS || testCase.functionalArea === personaArea) &&
     (!personaSearch || `${testCase.testCaseId} ${testCase.scenario}`.toLowerCase().includes(personaSearch.toLowerCase())),
   );
   const filteredTesterCases = overview.testCases.filter((testCase) =>
+    (testCase.isActive || assignedSet.has(testCase.id)) &&
     (testerArea === ALL_AREAS || testCase.functionalArea === testerArea) &&
     (!testerSearch || `${testCase.testCaseId} ${testCase.scenario}`.toLowerCase().includes(testerSearch.toLowerCase())),
   );
-  const assignedSet = new Set(draftAssignedIds);
   const personaSet = new Set(selectedPersonaId ? draftPersonaCaseIds[selectedPersonaId] ?? [] : []);
   const testerSummary = selectedTester ? overview.testers.find((tester) => tester.id === selectedTester.id) : null;
 
@@ -154,7 +156,7 @@ export function AssignmentManager({ overview }: { overview: AdminAssignmentOverv
   }
 
   function setVisibleCases(checked: boolean) {
-    const ids = filteredTesterCases.map((testCase) => testCase.id);
+    const ids = filteredTesterCases.filter((testCase) => checked ? testCase.isActive : true).map((testCase) => testCase.id);
     setDraftAssignedIds((current) => {
       const next = new Set(current);
       for (const id of ids) {
@@ -297,9 +299,9 @@ export function AssignmentManager({ overview }: { overview: AdminAssignmentOverv
               <div className="max-h-[28rem] overflow-auto rounded-md border border-border">
                 <Table className="min-w-[820px]">
                   <TableHeader><TableRow><TableHead>Assign</TableHead><TableHead>Test Case</TableHead><TableHead>Functional Area</TableHead><TableHead>Scenario</TableHead></TableRow></TableHeader>
-                  <TableBody>{filteredTesterCases.map((testCase) => <TableRow key={testCase.id} className="cursor-pointer" onClick={() => toggleDraftCase(testCase.id)}>
-                    <TableCell><input type="checkbox" aria-label={`Assign ${testCase.testCaseId} to ${selectedTester.name}`} checked={assignedSet.has(testCase.id)} onChange={() => toggleDraftCase(testCase.id)} onClick={(event) => event.stopPropagation()} /></TableCell>
-                    <TableCell className="font-medium">{testCase.testCaseId}</TableCell><TableCell>{testCase.functionalArea}</TableCell><TableCell className="max-w-96 truncate" title={testCase.scenario}>{testCase.scenario}</TableCell>
+                  <TableBody>{filteredTesterCases.map((testCase) => <TableRow key={testCase.id} className={testCase.isActive || assignedSet.has(testCase.id) ? "cursor-pointer" : "opacity-60"} onClick={() => { if (testCase.isActive || assignedSet.has(testCase.id)) toggleDraftCase(testCase.id); }}>
+                    <TableCell><input type="checkbox" aria-label={`${testCase.isActive ? "Assign" : "Remove archived case"} ${testCase.testCaseId} ${testCase.isActive ? `to ${selectedTester.name}` : ""}`} checked={assignedSet.has(testCase.id)} disabled={!testCase.isActive && !assignedSet.has(testCase.id)} onChange={() => toggleDraftCase(testCase.id)} onClick={(event) => event.stopPropagation()} /></TableCell>
+                    <TableCell className="font-medium">{testCase.testCaseId}{!testCase.isActive ? <span className="ml-2 text-xs text-foreground-muted">Archived</span> : null}</TableCell><TableCell>{testCase.functionalArea}</TableCell><TableCell className="max-w-96 truncate" title={testCase.scenario}>{testCase.scenario}</TableCell>
                   </TableRow>)}</TableBody>
                 </Table>
               </div>

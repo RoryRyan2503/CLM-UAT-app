@@ -13,8 +13,11 @@ function record(vendor = "Ironclad", tester = "Alice", testCase = "AI-01"): Expo
   const resultId = `result-${assignmentId}`;
   return {
     testCase: { id: `case-${testCase}`, test_case_id: testCase, functional_area: "AI", persona: "Legal",
-      scenario: "Review", suggested_steps: "Open\nReview, then save", expected_result: "Saved",
-      required_evidence: "Screenshot", source_row_number: 8, created_at: timestamp, updated_at: timestamp },
+      scenario: "Review", use_case: "Review an agreement", suggested_steps: "Open\nReview, then save",
+      sirion_steps: "Sirion steps", sirion_feature: "Clause analysis", sirion_availability: "Available and Configured",
+      ironclad_steps: "Ironclad steps", ironclad_feature: "Workflow builder", ironclad_availability: "Not Configured",
+      expected_result: "Saved", required_evidence: "Screenshot", source_row_number: 8, is_active: true,
+      created_at: timestamp, updated_at: timestamp },
     assignment: { id: assignmentId, tester_id: tester, vendor_id: vendor, test_case_id: `case-${testCase}`,
       is_active: false, created_at: timestamp },
     tester: { id: tester, name: tester, email: `${tester}@example.test`, department: "Procurement",

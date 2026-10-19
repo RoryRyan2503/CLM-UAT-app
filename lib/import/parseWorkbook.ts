@@ -6,17 +6,65 @@ import {
   type ImportedTestCaseRow,
 } from "@/lib/validation/import";
 
-const REQUIRED_HEADER_SIGNATURE = [
-  "Test Case ID",
-  "Functional Area",
-  "Persona",
-  "Scenario",
-  "Suggested Steps",
-  "Expected Result",
-  "Required Evidence",
+type FieldName =
+  | "testCaseId" | "functionalArea" | "persona" | "scenario" | "useCase"
+  | "suggestedSteps" | "sirionSteps" | "sirionFeature" | "sirionAvailability"
+  | "ironcladSteps" | "ironcladFeature" | "ironcladAvailability"
+  | "expectedResult" | "requiredEvidence";
+
+type HeaderMap = Partial<Record<FieldName, number>>;
+
+const HEADER_ALIASES: Record<FieldName, string[]> = {
+  testCaseId: ["testcaseid", "testid"],
+  functionalArea: ["functionalarea"],
+  persona: ["persona", "personas"],
+  scenario: ["honeywellscenario", "scenario"],
+  useCase: ["usecases", "usecase"],
+  expectedResult: ["whatyoushouldsee", "expectedresult"],
+  requiredEvidence: ["requiredevidence"],
+  suggestedSteps: ["suggestedsteps"],
+  sirionSteps: ["sirionsteps", "sirionsuggestedsteps"],
+  sirionFeature: ["sirionfeature", "sirionfeaturedescription"],
+  sirionAvailability: ["sirionavailability"],
+  ironcladSteps: ["ironcladsteps", "ironcladsuggestedsteps"],
+  ironcladFeature: ["ironcladfeature", "ironcladfeaturedescription"],
+  ironcladAvailability: ["ironcladavailability"],
+};
+
+const LEGACY_REQUIRED: FieldName[] = ["testCaseId", "functionalArea", "scenario", "suggestedSteps", "expectedResult"];
+const CATALOG_REQUIRED: FieldName[] = [
+  "testCaseId", "functionalArea", "persona", "scenario", "useCase", "expectedResult",
+  "sirionSteps", "sirionFeature", "sirionAvailability",
+  "ironcladSteps", "ironcladFeature", "ironcladAvailability",
 ];
 
-const PREFERRED_SHEET_NAME = "User Test Results";
+type Availability = "Available and Configured" | "Not Configured" | "Not Available" | "Not Specified";
+
+function normalizeHeader(value: unknown): string {
+  return String(value ?? "").normalize("NFKD").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function resolveHeader(row: unknown[]): { columns: HeaderMap; fullCatalog: boolean } | null {
+  const normalizedHeaders = row.map(normalizeHeader);
+  const columns: HeaderMap = {};
+  for (const [field, aliases] of Object.entries(HEADER_ALIASES) as [FieldName, string[]][]) {
+    const index = normalizedHeaders.findIndex((header) => aliases.includes(header));
+    if (index !== -1) columns[field] = index;
+  }
+  const isCatalog = CATALOG_REQUIRED.every((field) => columns[field] !== undefined);
+  const isLegacy = LEGACY_REQUIRED.every((field) => columns[field] !== undefined);
+  return isCatalog || isLegacy ? { columns, fullCatalog: isCatalog } : null;
+}
+
+function normalizeAvailability(value: string): Availability | null {
+  const normalized = normalizeHeader(value);
+  if (!normalized) return "Not Specified";
+  if (normalized === "availableconfigured" || normalized === "availableandconfigured") return "Available and Configured";
+  if (normalized === "availablenotconfigured" || normalized === "notconfigured") return "Not Configured";
+  if (normalized === "notavailable" || normalized === "notanavailablefeatureintheclm") return "Not Available";
+  if (normalized === "notspecified") return "Not Specified";
+  return null;
+}
 
 /**
  * Parses an uploaded workbook (.xlsx or .csv) and extracts the canonical test-definition
@@ -25,12 +73,18 @@ const PREFERRED_SHEET_NAME = "User Test Results";
  * reference CSV export does: tester-name/department/persona/etc. rows before the real header).
  */
 export function parseTestCaseWorkbook(buffer: ArrayBuffer | Buffer, fileName: string): ImportPreview {
-  const workbook = XLSX.read(buffer, { type: "buffer" });
+    const isCsv = fileName.toLowerCase().endsWith(".csv");
+    const csvText = isCsv ? (Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer)).toString("utf8") : undefined;
+    const workbook = isCsv
+      ? XLSX.read(csvText!, { type: "string" })
+      : XLSX.read(buffer, { type: "buffer" });
   const sheetNames = workbook.SheetNames;
 
+  const preferredCatalogSheet = sheetNames.find((name) => normalizeHeader(name) === "testcases");
   const usedSheetName =
-    sheetNames.find((name) => name === PREFERRED_SHEET_NAME) ??
-    sheetNames.find((name) => sheetHasHeaderSignature(workbook, name)) ??
+    (preferredCatalogSheet && sheetHasSupportedHeader(workbook, preferredCatalogSheet) ? preferredCatalogSheet : undefined) ??
+    sheetNames.find((name) => name === "User Test Results" && sheetHasSupportedHeader(workbook, name)) ??
+    sheetNames.find((name) => sheetHasSupportedHeader(workbook, name)) ??
     sheetNames[0];
 
   if (!usedSheetName) {
@@ -40,23 +94,11 @@ export function parseTestCaseWorkbook(buffer: ArrayBuffer | Buffer, fileName: st
   const sheet = workbook.Sheets[usedSheetName];
   const rows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: true, raw: false });
 
-  const headerRowIndex = findHeaderRowIndex(rows);
-  if (headerRowIndex === -1) {
-    throw new Error(
-      `Could not locate the expected header row (${REQUIRED_HEADER_SIGNATURE.join(", ")}) in "${usedSheetName}".`,
-    );
-  }
-
-  const header = rows[headerRowIndex].map((cell) => String(cell ?? "").trim());
-  const columnIndex = {
-    testCaseId: header.indexOf("Test Case ID"),
-    functionalArea: header.indexOf("Functional Area"),
-    persona: header.indexOf("Persona"),
-    scenario: header.indexOf("Scenario"),
-    suggestedSteps: header.indexOf("Suggested Steps"),
-    expectedResult: header.indexOf("Expected Result"),
-    requiredEvidence: header.indexOf("Required Evidence"),
-  };
+  const headerRowIndex = rows.findIndex((row) => Boolean(row && resolveHeader(row)));
+  if (headerRowIndex === -1) throw new Error(`Could not locate a supported test-case header row in "${usedSheetName}".`);
+  const header = resolveHeader(rows[headerRowIndex]);
+  if (!header) throw new Error(`Could not map test-case columns in "${usedSheetName}".`);
+  const { columns: columnIndex, fullCatalog } = header;
 
   const validRows: ImportedTestCaseRow[] = [];
   const rowErrors: ImportRowError[] = [];
@@ -70,14 +112,31 @@ export function parseTestCaseWorkbook(buffer: ArrayBuffer | Buffer, fileName: st
       continue; // skip fully blank rows
     }
 
+    const value = (field: FieldName) => columnIndex[field] === undefined ? "" : String(row[columnIndex[field]!] ?? "");
+    const legacySteps = value("suggestedSteps").trim();
+    const sirionAvailability = normalizeAvailability(value("sirionAvailability"));
+    const ironcladAvailability = normalizeAvailability(value("ironcladAvailability"));
+    if (!sirionAvailability || !ironcladAvailability) {
+      const invalid = !sirionAvailability ? "Sirion availability" : "Ironclad availability";
+      rowErrors.push({ rowNumber, message: `${invalid} has an unsupported value.` });
+      continue;
+    }
+
     const candidate = {
-      testCaseId: String(row[columnIndex.testCaseId] ?? "").trim(),
-      functionalArea: String(row[columnIndex.functionalArea] ?? "").trim(),
-      persona: String(row[columnIndex.persona] ?? "").trim(),
-      scenario: String(row[columnIndex.scenario] ?? "").trim(),
-      suggestedSteps: String(row[columnIndex.suggestedSteps] ?? "").trim(),
-      expectedResult: String(row[columnIndex.expectedResult] ?? "").trim(),
-      requiredEvidence: String(row[columnIndex.requiredEvidence] ?? "").trim(),
+      testCaseId: value("testCaseId"),
+      functionalArea: value("functionalArea"),
+      persona: value("persona"),
+      scenario: value("scenario"),
+      useCase: value("useCase").trim() || value("scenario").trim(),
+      suggestedSteps: legacySteps,
+      sirionSteps: value("sirionSteps").trim() || legacySteps,
+      sirionFeature: value("sirionFeature").trim(),
+      sirionAvailability,
+      ironcladSteps: value("ironcladSteps").trim() || legacySteps,
+      ironcladFeature: value("ironcladFeature").trim(),
+      ironcladAvailability,
+      expectedResult: value("expectedResult"),
+      requiredEvidence: columnIndex.requiredEvidence === undefined ? undefined : value("requiredEvidence"),
       sourceRowNumber: rowNumber,
     };
 
@@ -101,25 +160,15 @@ export function parseTestCaseWorkbook(buffer: ArrayBuffer | Buffer, fileName: st
   return {
     sheetNames,
     usedSheetName,
+    fullCatalog,
     validRows,
     rowErrors,
     duplicateTestCaseIds: Array.from(duplicateTestCaseIds),
   };
 }
 
-function findHeaderRowIndex(rows: unknown[][]): number {
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    if (!row) continue;
-    const normalized = row.map((cell) => String(cell ?? "").trim());
-    const hasAll = REQUIRED_HEADER_SIGNATURE.every((required) => normalized.includes(required));
-    if (hasAll) return i;
-  }
-  return -1;
-}
-
-function sheetHasHeaderSignature(workbook: XLSX.WorkBook, sheetName: string): boolean {
+function sheetHasSupportedHeader(workbook: XLSX.WorkBook, sheetName: string): boolean {
   const sheet = workbook.Sheets[sheetName];
   const rows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: true, raw: false });
-  return findHeaderRowIndex(rows) !== -1;
+  return rows.some((row) => Boolean(row && resolveHeader(row)));
 }

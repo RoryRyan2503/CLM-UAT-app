@@ -37,7 +37,7 @@ export function ImportWorkbook() {
         toast.error(res.error);
         return;
       }
-      toast.success(`Imported: ${res.data.createdCount} created, ${res.data.updatedCount} updated.`);
+      toast.success(`Imported: ${res.data.createdCount} created, ${res.data.updatedCount} updated, ${res.data.archivedCount} archived.`);
       setPreview(null);
     });
   }
@@ -73,6 +73,7 @@ export function ImportWorkbook() {
               <Badge variant="outline">Sheets: {preview.sheetNames.join(", ")}</Badge>
               <Badge variant="outline">Using: {preview.usedSheetName}</Badge>
               <Badge variant="success">{preview.validRows.length} valid rows</Badge>
+              {preview.fullCatalog ? <Badge variant="critical">Full catalog: missing cases will be archived</Badge> : <Badge variant="outline">Legacy import: existing cases retained</Badge>}
               {preview.rowErrors.length > 0 ? (
                 <Badge variant="critical">{preview.rowErrors.length} row errors</Badge>
               ) : null}
@@ -91,13 +92,17 @@ export function ImportWorkbook() {
               </div>
             ) : null}
 
+            {preview.fullCatalog ? <p className="text-sm text-foreground-muted">Evaluation records are preserved. Test cases omitted from this full catalog will be archived and cannot receive new assignments.</p> : null}
+
             <div className="max-h-96 overflow-auto rounded-lg border border-border">
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Test Case ID</TableHead>
                     <TableHead>Functional Area</TableHead>
-                    <TableHead>Scenario</TableHead>
+                    <TableHead>Use Case</TableHead>
+                    <TableHead>Sirion Feature / Availability</TableHead>
+                    <TableHead>Ironclad Feature / Availability</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -105,7 +110,9 @@ export function ImportWorkbook() {
                     <TableRow key={row.testCaseId}>
                       <TableCell className="font-medium">{row.testCaseId}</TableCell>
                       <TableCell>{row.functionalArea}</TableCell>
-                      <TableCell className="max-w-md truncate">{row.scenario}</TableCell>
+                      <TableCell className="max-w-md truncate">{row.useCase}</TableCell>
+                      <TableCell className="max-w-sm"><span className="block truncate">{row.sirionFeature || "—"}</span><span className="text-xs text-foreground-muted">{row.sirionAvailability}</span></TableCell>
+                      <TableCell className="max-w-sm"><span className="block truncate">{row.ironcladFeature || "—"}</span><span className="text-xs text-foreground-muted">{row.ironcladAvailability}</span></TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
