@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { ChevronLeft, ChevronRight, SlidersHorizontal } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -22,6 +23,8 @@ export function ResultsReviewTable({ results }: { results: AdminResultRow[] }) {
     status: ALL, grade: ALL, severity: ALL, improvement: ALL, configuration: ALL, assistance: ALL,
   });
   const [sort, setSort] = useState<SortState>({ key: "updatedAt", direction: "desc" });
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(25);
 
   const choices = useMemo(() => ({
     testers: unique(results.map((row) => row.testerName)),
@@ -60,12 +63,25 @@ export function ResultsReviewTable({ results }: { results: AdminResultRow[] }) {
 
   function updateFilter(key: keyof typeof filters, value: string) {
     setFilters((current) => ({ ...current, [key]: value }));
+    setPage(0);
   }
 
   function changeSort(key: SortKey) {
+    setPage(0);
     setSort((current) => current.key === key
       ? { key, direction: current.direction === "asc" ? "desc" : "asc" }
       : { key, direction: key === "updatedAt" || key === "completedAt" ? "desc" : "asc" });
+  }
+
+  function updateSearch(value: string) {
+    setSearch(value);
+    setPage(0);
+  }
+
+  function resetFilters() {
+    setSearch("");
+    setFilters({ tester: ALL, vendor: ALL, testCase: ALL, scenario: ALL, area: ALL, persona: ALL, status: ALL, grade: ALL, severity: ALL, improvement: ALL, configuration: ALL, assistance: ALL });
+    setPage(0);
   }
 
   async function handleViewEvidence(evidence: AdminResultRow["evidence"][number]) {
@@ -82,28 +98,48 @@ export function ResultsReviewTable({ results }: { results: AdminResultRow[] }) {
   }
 
   const hasFilters = Object.values(filters).some((value) => value !== ALL) || Boolean(search);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(page, pageCount - 1);
+  const pagedResults = filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
+  const firstResult = filtered.length ? currentPage * pageSize + 1 : 0;
+  const lastResult = Math.min((currentPage + 1) * pageSize, filtered.length);
+  const advancedFilterCount = Object.entries(filters).filter(([key, value]) =>
+    !["tester", "vendor", "status"].includes(key) && value !== ALL,
+  ).length;
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid gap-3 rounded-md border border-border bg-background p-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Input aria-label="Search results" placeholder="Search results" value={search} onChange={(event) => setSearch(event.target.value)} />
-        <Filter label="Tester" value={filters.tester} values={choices.testers} onChange={(value) => updateFilter("tester", value)} />
-        <Filter label="Tool" value={filters.vendor} values={choices.vendors} onChange={(value) => updateFilter("vendor", value)} />
-        <Filter label="Test case" value={filters.testCase} values={choices.cases} onChange={(value) => updateFilter("testCase", value)} />
-        <Filter label="Function / scenario" value={filters.scenario} values={choices.scenarios} onChange={(value) => updateFilter("scenario", value)} />
-        <Filter label="Functional area" value={filters.area} values={choices.areas} onChange={(value) => updateFilter("area", value)} />
-        <Filter label="Tester persona" value={filters.persona} values={choices.personas} onChange={(value) => updateFilter("persona", value)} />
-        <Filter label="Status" value={filters.status} values={choices.statuses} onChange={(value) => updateFilter("status", value)} />
-        <Filter label="Grade" value={filters.grade} values={choices.grades} onChange={(value) => updateFilter("grade", value)} missingLabel="Missing" />
-        <Filter label="Severity" value={filters.severity} values={choices.severities} onChange={(value) => updateFilter("severity", value)} missingLabel="Missing" />
-        <BooleanFilter label="Improvement needed" value={filters.improvement} onChange={(value) => updateFilter("improvement", value)} />
-        <BooleanFilter label="Configuration required" value={filters.configuration} onChange={(value) => updateFilter("configuration", value)} />
-        <BooleanFilter label="Vendor assistance" value={filters.assistance} onChange={(value) => updateFilter("assistance", value)} />
-        <div className="flex items-center justify-between gap-3 text-sm text-foreground-muted sm:col-span-2 xl:col-span-3">
-          <span>{filtered.length} of {results.length} results</span>
-          <span>Sorted by {sortLabel(sort.key)} ({sort.direction})</span>
+      <div className="flex flex-col gap-3 rounded-md border border-border bg-background p-3">
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <Input aria-label="Search results" placeholder="Search tester, case, or scenario" value={search} onChange={(event) => updateSearch(event.target.value)} />
+          <Filter label="Tester" value={filters.tester} values={choices.testers} onChange={(value) => updateFilter("tester", value)} />
+          <Filter label="Tool" value={filters.vendor} values={choices.vendors} onChange={(value) => updateFilter("vendor", value)} />
+          <Filter label="Status" value={filters.status} values={choices.statuses} onChange={(value) => updateFilter("status", value)} />
         </div>
-        <Button type="button" variant="outline" onClick={() => { setSearch(""); setFilters({ tester: ALL, vendor: ALL, testCase: ALL, scenario: ALL, area: ALL, persona: ALL, status: ALL, grade: ALL, severity: ALL, improvement: ALL, configuration: ALL, assistance: ALL }); }} disabled={!hasFilters}>Reset filters</Button>
+        <details className="group rounded-md border border-border px-3">
+          <summary className="flex cursor-pointer list-none items-center gap-2 py-2 text-sm font-medium [&::-webkit-details-marker]:hidden">
+            <SlidersHorizontal aria-hidden="true" className="size-4" />
+            Advanced filters
+            {advancedFilterCount ? <span className="rounded-sm bg-surface-muted px-1.5 py-0.5 text-xs">{advancedFilterCount} active</span> : null}
+            <span className="ml-auto text-xs text-foreground-muted group-open:hidden">Show</span>
+            <span className="ml-auto hidden text-xs text-foreground-muted group-open:inline">Hide</span>
+          </summary>
+          <div className="grid gap-2 border-t border-border py-3 sm:grid-cols-2 xl:grid-cols-4">
+            <Filter label="Test case" value={filters.testCase} values={choices.cases} onChange={(value) => updateFilter("testCase", value)} />
+            <Filter label="Function / scenario" value={filters.scenario} values={choices.scenarios} onChange={(value) => updateFilter("scenario", value)} />
+            <Filter label="Functional area" value={filters.area} values={choices.areas} onChange={(value) => updateFilter("area", value)} />
+            <Filter label="Tester persona" value={filters.persona} values={choices.personas} onChange={(value) => updateFilter("persona", value)} />
+            <Filter label="Grade" value={filters.grade} values={choices.grades} onChange={(value) => updateFilter("grade", value)} missingLabel="Missing" />
+            <Filter label="Severity" value={filters.severity} values={choices.severities} onChange={(value) => updateFilter("severity", value)} missingLabel="Missing" />
+            <BooleanFilter label="Improvement needed" value={filters.improvement} onChange={(value) => updateFilter("improvement", value)} />
+            <BooleanFilter label="Configuration required" value={filters.configuration} onChange={(value) => updateFilter("configuration", value)} />
+            <BooleanFilter label="Vendor assistance" value={filters.assistance} onChange={(value) => updateFilter("assistance", value)} />
+          </div>
+        </details>
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-foreground-muted">
+          <span>{filtered.length} matching results, sorted by {sortLabel(sort.key)} ({sort.direction})</span>
+          <Button type="button" variant="ghost" size="sm" onClick={resetFilters} disabled={!hasFilters}>Reset filters</Button>
+        </div>
       </div>
 
       <div className="overflow-auto rounded-md border border-border bg-background">
@@ -126,7 +162,7 @@ export function ResultsReviewTable({ results }: { results: AdminResultRow[] }) {
             <TableHead>Evidence</TableHead>
           </TableRow></TableHeader>
           <TableBody>
-            {filtered.map((row) => <TableRow key={row.resultId}>
+            {pagedResults.map((row) => <TableRow key={row.resultId}>
               <TableCell className="font-medium">{row.testerName}</TableCell>
               <TableCell>{row.testerEmail ?? "—"}{row.testerPersona ? <span className="block text-xs text-foreground-muted">{row.testerPersona}</span> : null}</TableCell>
               <TableCell>{row.vendorName}</TableCell>
@@ -153,6 +189,20 @@ export function ResultsReviewTable({ results }: { results: AdminResultRow[] }) {
             {filtered.length === 0 ? <TableRow><TableCell colSpan={15} className="py-12 text-center text-sm text-foreground-muted">No results match these filters.</TableCell></TableRow> : null}
           </TableBody>
         </Table>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm text-foreground-muted">
+          <span>Rows per page</span>
+          <select aria-label="Rows per page" className="h-9 rounded-md border border-border bg-background px-2 text-sm text-foreground" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(0); }}>
+            {[25, 50, 100].map((size) => <option key={size} value={size}>{size}</option>)}
+          </select>
+          <span>{firstResult}–{lastResult} of {filtered.length}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button type="button" size="icon" variant="outline" aria-label="Previous page" title="Previous page" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}><ChevronLeft /></Button>
+          <span className="min-w-24 text-center text-sm text-foreground-muted">Page {currentPage + 1} of {pageCount}</span>
+          <Button type="button" size="icon" variant="outline" aria-label="Next page" title="Next page" disabled={currentPage >= pageCount - 1} onClick={() => setPage(currentPage + 1)}><ChevronRight /></Button>
+        </div>
       </div>
     </div>
   );

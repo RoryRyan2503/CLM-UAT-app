@@ -1,6 +1,9 @@
 "use client";
 
+import { useMemo, useState } from "react";
+import { Search } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -8,7 +11,7 @@ import { COMPLETED_STATUSES } from "@/lib/constants";
 
 type Overview = Awaited<ReturnType<typeof import("@/lib/data/progress").getProgressOverview>>;
 
-export function OverviewAnalytics({ overview }: { overview: Overview }) {
+export function OverviewAnalytics({ overview, attentionEnabled }: { overview: Overview; attentionEnabled: boolean }) {
   return (
     <div className="flex flex-col gap-5">
       <div>
@@ -21,13 +24,13 @@ export function OverviewAnalytics({ overview }: { overview: Overview }) {
           <TabsTrigger value="participation">Participation</TabsTrigger>
           <TabsTrigger value="outcomes">Outcomes & areas</TabsTrigger>
           <TabsTrigger value="comparison">Vendor comparison</TabsTrigger>
-          <TabsTrigger value="attention">Attention ({overview.attention.length})</TabsTrigger>
+          {attentionEnabled ? <TabsTrigger value="attention">Attention ({overview.attention.length})</TabsTrigger> : null}
         </TabsList>
         <TabsContent value="overview"><OverviewTab overview={overview} /></TabsContent>
         <TabsContent value="participation"><ParticipationTab overview={overview} /></TabsContent>
         <TabsContent value="outcomes"><OutcomesTab overview={overview} /></TabsContent>
         <TabsContent value="comparison"><ComparisonTab overview={overview} /></TabsContent>
-        <TabsContent value="attention"><AttentionTab overview={overview} /></TabsContent>
+        {attentionEnabled ? <TabsContent value="attention"><AttentionTab overview={overview} /></TabsContent> : null}
       </Tabs>
     </div>
   );
@@ -61,6 +64,16 @@ function OverviewTab({ overview }: { overview: Overview }) {
 
 function ParticipationTab({ overview }: { overview: Overview }) {
   const p = overview.participation;
+  const [testerSearch, setTesterSearch] = useState("");
+  const [participationFilter, setParticipationFilter] = useState("all");
+  const filteredTesters = useMemo(() => {
+    const search = testerSearch.trim().toLowerCase();
+    return p.testers.filter((tester) => {
+      const matchesName = !search || tester.testerName.toLowerCase().includes(search);
+      const matchesState = participationFilter === "all" || tester.state.toLowerCase() === participationFilter;
+      return matchesName && matchesState;
+    });
+  }, [p.testers, testerSearch, participationFilter]);
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
@@ -71,18 +84,37 @@ function ParticipationTab({ overview }: { overview: Overview }) {
         <Stat title="Unassigned" value={p.unassignedTesters} detail="No active assignments" />
       </div>
       <Card>
-        <CardHeader><CardTitle className="text-base">Tester participation and workload</CardTitle></CardHeader>
+        <CardHeader>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <CardTitle className="text-base">Tester participation and workload</CardTitle>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <div className="relative min-w-56">
+                <Search aria-hidden="true" className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-foreground-muted" />
+                <Input aria-label="Search testers by name" placeholder="Search tester name" className="pl-9" value={testerSearch} onChange={(event) => setTesterSearch(event.target.value)} />
+              </div>
+              <select aria-label="Filter participation status" className="h-10 rounded-md border border-border bg-background px-3 text-sm" value={participationFilter} onChange={(event) => setParticipationFilter(event.target.value)}>
+                <option value="all">All participation statuses</option>
+                <option value="started">Started</option>
+                <option value="not started">Not started</option>
+                <option value="unassigned">Unassigned</option>
+              </select>
+            </div>
+          </div>
+          <p className="text-xs text-foreground-muted">Showing {filteredTesters.length} of {p.testers.length} active testers</p>
+        </CardHeader>
         <CardContent>
           <Table>
             <TableHeader><TableRow><TableHead>Tester</TableHead><TableHead>Participation</TableHead><TableHead>Ironclad</TableHead><TableHead>Sirion</TableHead><TableHead>Completed</TableHead><TableHead>Overall</TableHead></TableRow></TableHeader>
-            <TableBody>{p.testers.map((tester) => <TableRow key={tester.testerId}>
+            <TableBody>{filteredTesters.map((tester) => <TableRow key={tester.testerId}>
               <TableCell className="font-medium">{tester.testerName}</TableCell>
               <TableCell><StateLabel state={tester.state} /></TableCell>
               <TableCell>{tester.ironcladCompleted}/{tester.ironcladTotal}</TableCell>
               <TableCell>{tester.sirionCompleted}/{tester.sirionTotal}</TableCell>
               <TableCell>{tester.completed}/{tester.total}{tester.completedAll ? " · All" : ""}</TableCell>
               <TableCell className="min-w-40"><div className="flex items-center gap-2"><Progress value={percent(tester.completed, tester.total)} /><span className="whitespace-nowrap text-xs text-foreground-muted">{percent(tester.completed, tester.total)}%</span></div></TableCell>
-            </TableRow>)}</TableBody>
+            </TableRow>)}
+              {filteredTesters.length === 0 ? <TableRow><TableCell colSpan={6} className="py-8 text-center text-sm text-foreground-muted">No testers match these filters.</TableCell></TableRow> : null}
+            </TableBody>
           </Table>
           <p className="mt-3 text-xs text-foreground-muted">Started means a result has a start timestamp, including a saved draft. Completed uses the app’s completed statuses: {COMPLETED_STATUSES.join(", ")}.</p>
         </CardContent>

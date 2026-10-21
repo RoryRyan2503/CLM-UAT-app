@@ -1,8 +1,9 @@
 import { EvidenceSettings } from "@/components/admin/evidence-settings";
-import { getEvidenceMode } from "@/lib/data/appSettings";
+import { OverviewSettings } from "@/components/admin/overview-settings";
+import { getEvidenceMode, getOverviewAttentionEnabled } from "@/lib/data/appSettings";
 
 export default async function AdminSettingsPage() {
-  const evidenceMode = await getEvidenceMode();
+  const [evidenceMode, attentionEnabled] = await Promise.all([getEvidenceMode(), getOverviewAttentionEnabled()]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -11,6 +12,7 @@ export default async function AdminSettingsPage() {
         <p className="text-sm text-foreground-muted">Configure tester evaluation options.</p>
       </div>
       <EvidenceSettings initialMode={evidenceMode} />
+      <OverviewSettings initialAttentionEnabled={attentionEnabled} />
     </div>
   );
 }

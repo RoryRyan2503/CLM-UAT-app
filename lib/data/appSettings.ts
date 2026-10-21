@@ -4,6 +4,22 @@ import { query } from "@/lib/db/pool";
 
 export type EvidenceMode = "disabled" | "sharepoint" | "upload";
 
+export async function getOverviewAttentionEnabled(): Promise<boolean> {
+  const { rows } = await query<{ overview_attention_enabled: boolean }>(
+    "select overview_attention_enabled from app_settings where id = 1",
+  );
+  if (!rows[0]) throw new AppError("VALIDATION", "Unable to load application settings.");
+  return rows[0].overview_attention_enabled;
+}
+
+export async function setOverviewAttentionEnabled(enabled: boolean): Promise<void> {
+  const { rowCount } = await query(
+    "update app_settings set overview_attention_enabled = $1, updated_at = now() where id = 1",
+    [enabled],
+  );
+  if (!rowCount) throw new AppError("VALIDATION", "Unable to save Overview settings.");
+}
+
 export async function getEvidenceMode(): Promise<EvidenceMode> {
   const { rows } = await query<{ evidence_mode: EvidenceMode }>(
     "select evidence_mode from app_settings where id = 1",
